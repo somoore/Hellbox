@@ -105,7 +105,7 @@ download_release_asset(){
 }
 
 # Resolve CLI: override -> cache -> local release build -> release download.
-resolve_doom(){
+resolve_hellbox(){
   if [ -n "${HELLBOX_BIN:-}" ]; then printf '%s' "$HELLBOX_BIN"; return; fi
   if [ -x "$BIN_DIR/hellbox$ext" ] && [ -f "$BIN_DIR/hellbox$ext.sha256" ]; then
     verify_sha256 "$BIN_DIR/hellbox$ext" "$BIN_DIR/hellbox$ext.sha256"
@@ -173,13 +173,13 @@ EOF
 say "Wrote $HOME_DIR/config.toml"
 
 # CLI.
-DOOM="$(resolve_doom)"
-say "Using hellbox CLI: $DOOM"
+HELLBOX="$(resolve_hellbox)"
+say "Using hellbox CLI: $HELLBOX"
 
 # Build, launch, open.
 say "Building the DOOM MicroVM image  (compiles the engine + fetches the WAD; a few minutes)"
-"$DOOM" build --name "$NAME"
+"$HELLBOX" build --name "$NAME"
 say "Launching the MicroVM"
-"$DOOM" up --name "$NAME"
+"$HELLBOX" up --name "$NAME"
 say "Opening DOOM  (http://127.0.0.1:6080)"
-"$DOOM" open --name "$NAME"
+"$HELLBOX" open --name "$NAME"
