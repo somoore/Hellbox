@@ -18,6 +18,14 @@ repos:
 
   - repo: local
     hooks:
+      # Supply-chain: GitHub Actions must be pinned to commit SHAs, not mutable tags.
+      - id: check-action-pins
+        name: GitHub Actions SHA-pin gate
+        language: script
+        entry: scripts/check-action-pins.sh
+        files: ^\.github/workflows/.*\.ya?ml$
+        pass_filenames: false
+
       # Supply-chain: every shipped dependency must be pinned to a release with a
       # hash. Fails on unpinned/unhashed crates/wheels; warns on dev-only soft-pins.
       - id: check-deps
