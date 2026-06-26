@@ -4,6 +4,17 @@ Use real LambdaDoom sessions for launch media. Do not use a static mock, local-o
 or generated DOOM-looking image: the point of the demo is that the pixels are streamed from an
 AWS Lambda MicroVM and survive suspend/resume.
 
+## Launch clip storyboard
+
+Keep the clip short and let the state change do the teaching:
+
+1. Show DOOM running in the browser with sound/input working.
+2. Click **Suspend** mid-fight.
+3. Show the paused/suspended state so it is clear compute is no longer running.
+4. Click **Resume**.
+5. Return to the same frame: same health, ammo, enemy position, and controls.
+6. End on the simple idea: the game is not simulated locally; the MicroVM was frozen and thawed.
+
 ## Capture
 
 Start a live proxy:

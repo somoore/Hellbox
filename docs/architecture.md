@@ -10,6 +10,9 @@ the design came from working around the platform's constraints, which I call out
 > API values below are ones I verified live; see
 > [microvm-ground-truth.md](microvm-ground-truth.md).
 
+**How to read this:** sections 1-3 explain the flow, sections 4-7 cover the hard parts that
+made the demo work, and sections 8-9 list the implementation choices and repo layout.
+
 ---
 
 ## 1. System overview
@@ -31,7 +34,7 @@ flowchart LR
         CP["Lambda MicroVMs control plane<br/>create, run, token, suspend, resume"]
         EP["Per-MicroVM HTTPS/WSS endpoint<br/>id.lambda-microvm.region.on.aws"]
         S3["S3 build artifacts"]
-        subgraph VM["Capsule MicroVM (ARM64 Firecracker, AL2023)"]
+        subgraph CAPSULE["Capsule MicroVM (ARM64 Firecracker, AL2023)"]
             direction TB
             DOOM["Chocolate Doom<br/>native aarch64 SDL2"]
             XVNC["Xvnc :1<br/>headless X, 640x400"]
@@ -43,7 +46,7 @@ flowchart LR
     end
     CLI -->|"AWS SDK / SigV4"| CP
     CLI -->|"zip context"| S3
-    CP -->|"manages, /ready hook :9000"| VM
+    CP -->|"manages, /ready hook :9000"| CAPSULE
     BROWSER -->|"http/ws on loopback"| PROXY
     PROXY -->|"TLS + JWE header"| EP
     EP --> VID
@@ -76,7 +79,7 @@ Lambda MicroVMs are opinionated. Each constraint below shaped the design.
 | **Lifecycle hooks are ENABLED/DISABLED toggles** | Hooks are switches, not script paths: `microvmImageHooks.ready`, `microvmHooks.run` and `resume`, plus `*TimeoutInSeconds` and `hooks.port`. I send `readyTimeoutInSeconds=600`. |
 | **The ready hook has to be on port 9000** | AWS POSTs its readiness probe to `http://127.0.0.1:9000/aws/lambda-microvms/runtime/v1/ready`. Any other port fails the build with "Ready hook invocation timed out". |
 | **Snapshot based** | DOOM has to be drawn at snapshot time (the ready render gate, section 4), or every run and resume restores a blank screen. Suspend and resume is a live memory snapshot. |
-| **8 GB account memory quota** | Each VM is at least 2 GB, and suspended VMs still hold their memory, so plan for a few at a time, not dozens. |
+| **8 GB account memory quota** | Each MicroVM is at least 2 GB, and suspended MicroVMs still hold their memory, so plan for a few at a time, not dozens. |
 
 ---
 
@@ -145,22 +148,22 @@ sequenceDiagram
     actor U as User
     participant CLI as ldoom CLI / control bar
     participant CP as MicroVMs control plane
-    participant VM as Capsule
+    participant CAP as Capsule
 
     U->>CLI: Suspend
     CLI->>CP: suspend_microvm
-    Note over VM: live memory + disk frozen (compute billing stops)
+    Note over CAP: live memory + disk frozen (compute billing stops)
     CP-->>CLI: SUSPENDED
 
     U->>CLI: Resume
     CLI->>CP: resume_microvm
-    Note over VM: restore frozen memory, re-mint token, refresh endpoint
+    Note over CAP: restore frozen memory, re-mint token, refresh endpoint
     CP-->>CLI: RUNNING
     Note over U: DOOM exactly where you left it (same frame, health, ammo)
 ```
 
 Suspend and resume are control-plane calls, so the in-page control panel (injected by the
-proxy, section 5) keeps working even while the VM is frozen and the stream is dead.
+proxy, section 5) keeps working even while the MicroVM is frozen and the stream is dead.
 
 ---
 
@@ -222,7 +225,7 @@ injects the headers and forwards over TLS. The token lives only in the proxy.
 The proxy (`rs-cli/src/proxy.rs`, on `hyper` 1.x) handles a request one of three ways:
 
 1. **`/__lambdadoom/*` goes to the local control plane.** Never forwarded. Drives suspend,
-   resume, and state with SigV4 (which works while the VM is frozen) and powers the injected
+   resume, and state with SigV4 (which works while the MicroVM is frozen) and powers the injected
    control panel.
 2. **A WebSocket upgrade** dials the upstream `wss://` with the auth and port headers, answers
    the browser handshake locally, and pumps frames both ways until either side closes.
@@ -247,8 +250,8 @@ The endpoint caps traffic at a size-dependent rate, so the codecs are a design l
 finishing touch. H.264 with motion-compensated P-frames (rather than VNC dirty rectangles)
 cuts the video bytes a lot for full-motion content, and Opus at 96 kbps (rather than raw PCM)
 cuts the audio bytes by about 13 to 15 times. Suspend-on-idle plus wake-on-traffic means an
-unwatched tab is not burning a running VM; the proxy tracks live WebSocket sessions to drive
-that idle suspend.
+unwatched tab is not burning a running MicroVM; the proxy tracks live WebSocket sessions to
+drive that idle suspend.
 
 ---
 
@@ -258,11 +261,11 @@ Two snapshot-specific concerns:
 
 - **Render at snapshot.** The `/ready` 503 gate holds until DOOM is drawn, so neither a cold
   run nor a resume restores a blank screen. Enforced, not hoped for.
-- **Entropy on resume.** A resumed VM replays frozen entropy, so a CSPRNG seeded before the
+- **Entropy on resume.** A resumed MicroVM replays frozen entropy, so a CSPRNG seeded before the
   snapshot would produce the same bytes twice, a real problem for TLS terminated inside the
-  VM. In LambdaDoom the endpoint terminates TLS, so the in-VM hop is plain and this is not
-  exercised. A future capsule that terminates TLS in-VM should reseed the entropy pool and
-  bounce the listener on resume.
+  MicroVM. In LambdaDoom the endpoint terminates TLS, so the hop inside the MicroVM is plain and
+  this is not exercised. A future capsule that terminates TLS inside the MicroVM should reseed
+  the entropy pool and bounce the listener on resume.
 
 Full threat model in [security.md](security.md).
 
@@ -288,7 +291,7 @@ Full threat model in [security.md](security.md).
 ```
 LambdaDoom/
 ├── deploy.sh               # one-command front door: deploy, fetch binary, build/up/open
-├── uninstall.sh            # remove everything (VM, image, stack, binary, local state)
+├── uninstall.sh            # remove everything (MicroVM, image, stack, binary, local state)
 ├── deploy/doom.yaml        # CloudFormation: S3 bucket + IAM build/exec roles (Launch Stack)
 ├── capsule/                # the MicroVM image
 │   ├── Dockerfile          #   compiles pinned SDL2 + Chocolate Doom, verifies WAD SHA256

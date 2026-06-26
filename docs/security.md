@@ -6,25 +6,32 @@ multi-tenant service and is not hardened as one. This is the honest threat model
 
 ## Trust boundaries
 
-```
-[ your browser ] --http/ws (loopback)--> [ ldoom proxy 127.0.0.1:6080 ]
-                                               | injects JWE auth header, TLS
-                                               v
-[ ldoom CLI ] --SigV4 (your AWS creds)--> [ MicroVMs control plane ]
-                                               |
-                              HTTPS/WSS, JWE-authenticated
-                                               v
-                          [ id.lambda-microvm.region.on.aws ]  (AWS-terminated TLS)
-                                               v
-                          [ MicroVM: Chocolate Doom, ARM64 Firecracker ]
+```mermaid
+flowchart LR
+    subgraph LOCAL["Your machine"]
+        BROWSER["browser tab"]
+        PROXY["ldoom proxy<br/>127.0.0.1:6080"]
+        CLI["ldoom CLI<br/>AWS credentials"]
+        BROWSER <-->|HTTP/WS on loopback| PROXY
+    end
+
+    subgraph AWS["AWS"]
+        CONTROL["Lambda MicroVMs<br/>control plane"]
+        ENDPOINT["MicroVM endpoint<br/>id.lambda-microvm.region.on.aws"]
+        MICROVM["Lambda MicroVM<br/>Chocolate Doom on ARM64 Firecracker"]
+    end
+
+    CLI -->|SigV4 lifecycle calls| CONTROL
+    PROXY -->|HTTPS/WSS + JWE header| ENDPOINT
+    ENDPOINT --> MICROVM
 ```
 
 ## What protects you
 
 - **Encrypted transport.** Browser to proxy is loopback only and never leaves your machine.
-  Proxy to VM is HTTPS and WSS, terminated by AWS.
+  Proxy to the MicroVM endpoint is HTTPS and WSS, terminated by AWS.
 - **Authenticated data plane.** The endpoint requires a JWE token in the `X-aws-proxy-auth`
-  header, or it returns 403. Reaching your VM requires a token minted with your AWS
+  header, or it returns 403. Reaching your MicroVM requires a token minted with your AWS
   credentials, so a random person on the internet cannot.
 - **Short-lived, scoped token.** `CreateMicrovmAuthToken` caps at 60 minutes and is restricted
   to ports 6901 to 6904. It is not a standing credential.
@@ -35,12 +42,13 @@ multi-tenant service and is not hardened as one. This is the honest threat model
   plane with your credentials, so they require a loopback `Host`, a loopback `Origin` when
   present, an HttpOnly per-session `ldoom_control` cookie, and `POST` for `suspend` and
   `resume`. A cross-origin, DNS-rebound, or blind local request gets a 403. See
-  `is_loopback_authority` and `cookie_has_control_secret` in `src/proxy.rs` and their tests.
+  `is_loopback_authority` and `cookie_has_control_secret` in `rs-cli/src/proxy.rs` and their
+  tests.
 - **Firecracker isolation in your own account.** No shared multi-tenant surface.
 - **Least-privilege IAM.** The build role has only `s3:GetObject` on the artifact bucket plus
-  CloudWatch Logs writes. The execution role has no permissions, since the VM never calls back
-  into AWS. The bucket is private, encrypted (AES256), and expires build contexts after three
-  days.
+  CloudWatch Logs writes. The execution role has no permissions, since the MicroVM never calls
+  back into AWS. The bucket is private, encrypted (AES256), and expires build contexts after
+  three days.
 
 ## Residual risks and non-goals
 
@@ -50,8 +58,8 @@ The parts I deliberately left out of scope:
   bound by same-origin policy. The per-session `ldoom_control` cookie blocks blind calls to
   the control endpoints, but a same-user process that can scrape the browser session or proxy
   traffic is still out of scope: a process running as you already owns your shell and
-  credentials. Those endpoints only suspend, resume, or read state for the one VM you own, so
-  the worst case is freezing or thawing your own game.
+  credentials. Those endpoints only suspend, resume, or read state for the one MicroVM you own,
+  so the worst case is freezing or thawing your own game.
 - **Your AWS credentials live on your machine** (via Granted, SSO, or environment variables),
   as with any AWS CLI or SDK use. They are never committed, and `.gitignore` excludes `.env`,
   `*.pem`, `*.key`, `aws-credentials*`, and `~/.lambdadoom/`. The binary reads credentials
@@ -64,13 +72,13 @@ The parts I deliberately left out of scope:
   this source. To avoid trusting a prebuilt artifact, build it yourself (`cd rs-cli && make
   release`) and point `deploy.sh` at it with `LDOOM_BIN`. The binary runs locally with your
   credentials, so only run a release you trust.
-- **Entropy after a snapshot.** A resumed VM replays frozen entropy, so a CSPRNG seeded before
-  the snapshot repeats its output. AWS terminates TLS, so the in-VM hop is plain and this is not
-  exercised here. A capsule that terminates TLS in-VM must reseed on resume. See section 7 of
-  [architecture.md](architecture.md).
+- **Entropy after a snapshot.** A resumed MicroVM replays frozen entropy, so a CSPRNG seeded
+  before the snapshot repeats its output. AWS terminates TLS, so the hop inside the MicroVM is
+  plain and this is not exercised here. A capsule that terminates TLS inside the MicroVM must
+  reseed on resume. See section 7 of [architecture.md](architecture.md).
 - **Default egress is the public internet.** Omitting the network connectors gives the
-  Lambda-managed defaults (JWE-authenticated ingress, internet egress). The VM can reach the
-  internet; it does not need to, but it is not network-isolated by default.
+  Lambda-managed defaults (JWE-authenticated ingress, internet egress). The MicroVM can reach
+  the internet; it does not need to, but it is not network-isolated by default.
 - **Not multi-tenant, not production.** No auth between browser and proxy beyond loopback
   binding, no rate limiting, no audit logging. Do not expose the proxy port off your machine.
 

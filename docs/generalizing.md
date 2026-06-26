@@ -1,4 +1,4 @@
-# Generalizing LambdaDoom
+# Beyond DOOM: reusable MicroVM capsules
 
 LambdaDoom is the acid test for serverless MicroVMs: if you can freeze and resume an
 interactive game, you can freeze and resume an app, dev environment, agent sandbox, or thin
@@ -24,7 +24,7 @@ Most of the repo is reusable for another capsule:
   `CreateMicrovmImage`.
 - `ldoom up`, `suspend`, `resume`, `down`, `rm`, and `ps` still drive the lifecycle.
 - `ldoom open` still mints an auth token and runs the loopback proxy.
-- The proxy still maps browser paths to internal VM ports through `X-aws-proxy-port`.
+- The proxy still maps browser paths to internal MicroVM ports through `X-aws-proxy-port`.
 - The ready hook still gates the image snapshot until the app is truly usable.
 
 The replacement work is mostly inside `capsule/`.

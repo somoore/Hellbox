@@ -5,11 +5,14 @@ building LambdaDoom. They are the load-bearing details: get one wrong and a buil
 fails or a request 403s. This is a working reference, not the official docs; check
 the AWS docs for anything not listed here.
 
+> **New-service warning:** these details were verified live while building LambdaDoom. Re-check
+> them against AWS docs before using this as a general Lambda MicroVM reference.
+
 ## Endpoint and signing
 
 - **Control plane:** SigV4-signed REST. Signing name `lambda`, host
   `https://lambda.<region>.amazonaws.com`, API path prefix `/2025-09-09/`.
-- **Data plane (the stream):** a per-VM hostname, `<id>.lambda-microvm.<region>.on.aws`.
+- **Data plane (the stream):** a per-MicroVM hostname, `<id>.lambda-microvm.<region>.on.aws`.
 - **Ingress is HTTPS / WSS only** (HTTP/1.1, HTTP/2, WebSockets, gRPC, SSE). No raw
   inbound TCP or UDP.
 
@@ -37,8 +40,8 @@ the AWS docs for anything not listed here.
 - `DeleteMicrovmImage` = **DELETE** `.../microvm-images/{FULL-ARN}` — the path segment
   must be the full image ARN, not the bare name (a name returns 400 "Invalid ARN
   format"); colons in the path are fine unencoded.
-- **Wake on traffic:** any data-plane request to a SUSPENDED VM auto-resumes it. To
-  keep a suspended VM paused, poll state via the control plane (`GetMicrovm` does not
+- **Wake on traffic:** any data-plane request to a SUSPENDED MicroVM auto-resumes it. To
+  keep a suspended MicroVM paused, poll state via the control plane (`GetMicrovm` does not
   resume), not by hitting the endpoint.
 - **Suspended duration:** configure `IdlePolicy.suspendedDurationSeconds` at 8 hours or
   less. The live API may accept larger values, but AWS public copy describes suspended
@@ -58,9 +61,9 @@ the AWS docs for anything not listed here.
 
 - Dockerfile base: `public.ecr.aws/lambda/microvms:al2023-minimal` (carries the guest
   agent). Managed base ARN per region: `arn:aws:lambda:<region>:aws:microvm-image:al2023-1`.
-- **ARM64 only**, up to 16 vCPU / 32 GB RAM / 32 GB disk per VM.
-- **Account memory quota is 8 GB total** (each VM is >= 2 GB, and suspended VMs still
-  hold their memory).
+- **ARM64 only**, up to 16 vCPU / 32 GB RAM / 32 GB disk per MicroVM.
+- **Account memory quota is 8 GB total** (each MicroVM is >= 2 GB, and suspended MicroVMs
+  still hold their memory).
 - **Amazon Linux 2023 has no SDL2 in its repos** (no EPEL), so anything SDL-based is
   compiled from source. AL2023 is glibc 2.34, roughly RHEL/Rocky 9.
 
