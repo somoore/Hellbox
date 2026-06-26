@@ -114,7 +114,7 @@ async def handler(ws):
 
 
 async def main():
-    async with websockets.serve(handler, "0.0.0.0", PORT, max_size=None):
+    async with websockets.serve(handler, "127.0.0.1", PORT, max_size=None):
         await asyncio.Future()
 
 

@@ -4,7 +4,11 @@
 **Scope:** Rust CLI (`rs-cli/`), the loopback proxy, the capsule runtime (`capsule/`),
 infra (`deploy/doom.yaml`), and the deploy/release supply chain.
 **Method:** Full manual read of every source file, plus `cargo deny check advisories`
-and an import audit of the capsule scripts.
+and an import audit of the capsule scripts. The capsule changes (L1) were **verified live**
+on 2026-06-26 via a full `build → up → open` cycle in `us-east-2`: image reached CREATED
+(proving the readiness hook still works on loopback) and all three stream WebSockets streamed
+data through the proxy with the services bound to `127.0.0.1` (proving the AWS ingress reaches
+in-guest services via loopback).
 
 ## Threat model (read this first — it calibrates every severity below)
 
@@ -24,8 +28,8 @@ Each finding lists **What / Where / Why / Fix**, sorted by severity.
 > **Remediation status (2026-06-26).** All findings below have been triaged and acted on.
 > `[FIXED]` = code/config change applied; `[FIXED: docs]` = the fix was documentation
 > because the mechanism already existed; `[RETRACTED]` = finding was wrong on closer
-> inspection; `[PARTIAL]` = safe portion shipped, risky portion deferred pending a cloud
-> verification cycle. See each entry.
+> inspection; `[VERIFIED]` = capsule change confirmed working against a live build. See each
+> entry. One **new** finding (M3) was discovered during live testing.
 
 ---
 
@@ -73,11 +77,33 @@ Each finding lists **What / Where / Why / Fix**, sorted by severity.
   unverifiable locally and not worth risking a confirmed-working capsule for a Low-value
   surface trim. **Verification-gated future optimization, not shipped.**
 
+### M3 — Stale `cryptography` wheel hash breaks the capsule build on a modern host  `[FIXED + VERIFIED]`
+
+- **What:** `capsule/requirements.txt` pinned a single sha256 for `cryptography==49.0.0` that
+  matches only the older `manylinux_2_17`/`manylinux2014` wheel. On a current build host pip
+  selects the newer-glibc `manylinux_2_34` wheel (different hash), and under `--require-hashes`
+  this **fails the build** with "THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS
+  FILE." This is a **pre-existing breakage on `main`**, unrelated to the security review — it
+  was surfaced when the first live build in this session failed at the pip stage (~1m50s).
+- **Where:** `capsule/requirements.txt:9-10` (single-hash `cryptography` pin);
+  `capsule/Dockerfile:32-34` (`pip install --require-hashes`). Observed in the CloudWatch log
+  for image `l1test`: expected `36d1709f…`, got `ccac2bfe…` (the `manylinux_2_34` wheel).
+- **Why:** `--require-hashes` is strict and correct (it's the supply-chain control), but a
+  single platform hash is brittle: any host glibc that shifts pip's wheel selection breaks the
+  build for everyone. The whole project becomes unbuildable until the hash is refreshed.
+- **Fix applied + verified:** Added the other published aarch64 `cp311-abi3` glibc hashes for
+  `cryptography==49.0.0` (`manylinux_2_17`, `manylinux_2_28`, `manylinux_2_34`, musllinux) so
+  pip accepts whichever wheel matches the host. Verified: the next build (`l1test2`) passed the
+  pip stage and reached CREATED. (`cffi`, `charset-normalizer`, `numpy`, `websockets` have the
+  same single-glibc-hash shape but only their *musllinux* alternate is unlisted, which AL2023's
+  glibc host never selects — so they are not currently broken. Worth multi-hashing them
+  proactively if the build host ever changes; logged here, not changed.)
+
 ---
 
 ## LOW
 
-### L1 — In-VM stream services bind `0.0.0.0` with no per-service authentication  `[PARTIAL]`
+### L1 — In-VM stream services bind `0.0.0.0` with no per-service authentication  `[FIXED + VERIFIED]`
 
 - **What:** `video_ws` (6903), `audio_ws` (6902), `input_ws` (6904), the readiness hook
   (9000), and `Xvnc` (`-SecurityTypes None`, 5901→6901) all listen on `0.0.0.0` inside the
@@ -92,21 +118,28 @@ Each finding lists **What / Where / Why / Fix**, sorted by severity.
   VM. If a future change broadened egress/ingress, or a co-resident service on the VM were
   compromised, there is no second factor. This is a **defense-in-depth gap**, not an open
   door.
-- **Fix — shipped (safe half):**
+- **Fix — shipped AND live-verified (both halves):**
   1. **Hook :9000 narrowed to loopback.** AWS probes the readiness hook at
-     `http://127.0.0.1:9000/...` (loopback — confirmed in `docs/architecture.md:80` and
-     `CLAUDE.md`), and :9000 is never in the minted token's `allowedPorts`, so binding it to
-     `127.0.0.1` removes it from the externally reachable surface with zero data-plane risk.
-     Done in `capsule/.../start.sh` (`ThreadingHTTPServer(("127.0.0.1", 9000), ...)`).
-  2. **Load-bearing invariant documented in code.** A `SECURITY:` comment at the token-mint
-     site (`open.rs`) states that `allowedPorts` scoping is the control keeping the
-     `0.0.0.0`-bound services off the internet, and that 9000/5901 must never be added.
-- **Fix — DEFERRED (risky, unverifiable locally):** binding the stream services
-  (6902/6903/6904) to `127.0.0.1`. The discriminating fact — whether the AWS MicroVM ingress
-  reaches in-guest services via **loopback** or via the VM's **external interface** — cannot
-  be determined from here. If it's the external interface, this bind change kills the entire
-  data plane on a capsule that is currently confirmed playable. **Requires a
-  `build → up → open` cloud verification cycle before it lands.** Not shipped blind.
+     `http://127.0.0.1:9000/...` (loopback — `docs/architecture.md:80`, `CLAUDE.md`), and
+     :9000 is never in the minted token's `allowedPorts`. Done in `capsule/.../start.sh`
+     (`ThreadingHTTPServer(("127.0.0.1", 9000), ...)`). **Verified:** the test image reached
+     CREATED, which only happens when the render-gated `/ready` 200 is delivered to AWS via
+     this hook — so loopback binding does not break readiness.
+  2. **Stream services 6902/6903/6904 narrowed to loopback.** Done in `video_ws.py`,
+     `audio_ws.py`, `input_ws.py` (`websockets.serve(handler, "127.0.0.1", PORT)`).
+     **Verified:** with the VM RUNNING and the Fork B proxy up, all three channels streamed
+     through the proxy — `/ldoom/video` returned 41,671 bytes of H.264, `/ldoom/audio`
+     returned the 19-byte OpusHead config frame, `/ldoom/input` accepted injected key events.
+     This proves the AWS MicroVM ingress reaches in-guest services **via loopback**, so the
+     bind change is safe — it was the one open question that blocked shipping this half, now
+     answered empirically.
+  3. **Load-bearing invariant documented in code.** A `SECURITY:` comment at the token-mint
+     site (`open.rs`) states that `allowedPorts` scoping is the control keeping the in-VM
+     services off the internet, and that 9000/5901 must never be added.
+- **Net effect:** every in-VM listener except websockify/Xvnc on :6901 (the display port,
+  which must stay reachable for the noVNC fallback) is now loopback-only. The externally
+  reachable surface is reduced to exactly the four token-scoped ports, all behind the AWS JWE
+  ingress.
 
 ### L2 — Default egress is the public internet  `[FIXED: docs]`
 
