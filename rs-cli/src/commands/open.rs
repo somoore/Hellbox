@@ -223,7 +223,7 @@ async fn suspend_idle(aws: &Aws, microvm_id: &str, name: &str) -> Result<()> {
 #[cfg(feature = "proxy")]
 fn generate_control_secret() -> Result<String> {
     let mut bytes = [0u8; 32];
-    getrandom::getrandom(&mut bytes).context("generating loopback control secret")?;
+    getrandom::fill(&mut bytes).context("generating loopback control secret")?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
