@@ -97,3 +97,5 @@ owner directly rather than posting a public exploit.
 LambdaDoom does not include or distribute retail DOOM game assets. By default, the build process
 downloads the shareware `DOOM1.WAD` and builds Chocolate Doom at image build time. See
 [LEGAL.md](../LEGAL.md) for the full legal notice.
+
+<!-- ci docs-only skip test: verify only secrets runs -->
