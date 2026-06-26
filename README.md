@@ -89,15 +89,29 @@ Full design is in [docs/architecture.md](docs/architecture.md), the security mod
 </details>
 
 <details>
+<summary><b>One-click prerequisites</b> (Launch Stack)</summary>
+
+This button uses CloudFormation to create only the prerequisites: the S3 build bucket and the
+two IAM roles. After it finishes, copy the stack outputs into `~/.lambdadoom/config.toml` and
+run `ldoom build`, `ldoom up`, `ldoom open`. For the full setup in one step (prerequisites,
+binary, build, launch, and open), use `./deploy.sh` instead.
+
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://lambdadoom-launch-932930471665.s3.amazonaws.com/doom.yaml&stackName=LambdaDoom)
+
+</details>
+
+<details>
 <summary><b>Manual control</b> (the <code>ldoom</code> CLI)</summary>
 
 `deploy.sh` wraps one CloudFormation stack ([`deploy/doom.yaml`](deploy/doom.yaml)) and the
-`ldoom` CLI. You can deploy the stack with the button or the CLI, then copy its outputs into
-`~/.lambdadoom/config.toml` and drive the lifecycle yourself.
-
-[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://raw.githubusercontent.com/somoore/LambdaDoom/main/deploy/doom.yaml&stackName=LambdaDoom)
+`ldoom` CLI. To drive them yourself, deploy the stack from the template file, copy its outputs
+into `~/.lambdadoom/config.toml`, then run the lifecycle:
 
 ```bash
+# one-time: create the S3 bucket + IAM roles from the local template
+aws cloudformation deploy --region us-east-1 --stack-name LambdaDoom \
+  --template-file deploy/doom.yaml --capabilities CAPABILITY_IAM
+
 ldoom build      # zip capsule -> S3 -> build image (compiles engine, fetches WAD) -> CREATED
 ldoom up         # launch a MicroVM from the image          (PENDING -> RUNNING)
 ldoom open       # mint a token, open the browser tab, play DOOM
