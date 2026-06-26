@@ -4,7 +4,11 @@
 **Scope:** Rust CLI (`rs-cli/`), the loopback proxy, the capsule runtime (`capsule/`),
 infra (`deploy/doom.yaml`), and the deploy/release supply chain.
 **Method:** Full manual read of every source file, plus `cargo deny check advisories`
-and an import audit of the capsule scripts.
+and an import audit of the capsule scripts. The capsule changes (L1) were **verified live**
+on 2026-06-26 via a full `build → up → open` cycle in `us-east-2`: image reached CREATED
+(proving the readiness hook still works on loopback) and all three stream WebSockets streamed
+data through the proxy with the services bound to `127.0.0.1` (proving the AWS ingress reaches
+in-guest services via loopback).
 
 ## Threat model (read this first — it calibrates every severity below)
 
@@ -21,11 +25,17 @@ process gaps (CI), defense-in-depth hardening, and attack-surface reduction.
 
 Each finding lists **What / Where / Why / Fix**, sorted by severity.
 
+> **Remediation status (2026-06-26).** All findings below have been triaged and acted on.
+> `[FIXED]` = code/config change applied; `[FIXED: docs]` = the fix was documentation
+> because the mechanism already existed; `[RETRACTED]` = finding was wrong on closer
+> inspection; `[VERIFIED]` = capsule change confirmed working against a live build. See each
+> entry. One **new** finding (M3) was discovered during live testing.
+
 ---
 
 ## MEDIUM
 
-### M1 — CI has no automated vulnerability (CVE/RUSTSEC) gate
+### M1 — CI has no automated vulnerability (CVE/RUSTSEC) gate  `[FIXED]`
 
 - **What:** Despite `Cargo.toml` going to real lengths to dodge the vulnerable rustls 0.21 /
   webpki stack, nothing in CI would *catch a future* vulnerable dependency. `cargo-deny` is
@@ -39,39 +49,61 @@ Each finding lists **What / Where / Why / Fix**, sorted by severity.
 - **Status check:** I ran `cargo deny check advisories` against the committed `Cargo.lock` —
   it reported **`advisories ok`**, so this is a *process* gap (no live CVE today), not a
   concrete vuln. It should be locked in before it becomes one.
-- **Fix:** Add an `[advisories]` section to `deny.toml` and run advisories in CI:
-  ```yaml
-  # ci.yml — extend the existing cargo-deny job or add a step
-  command-arguments: check advisories licenses
-  ```
-  Or add a dedicated `cargo audit` step. Pin to a periodic schedule too (`on: schedule`) so a
-  newly-disclosed CVE in an unchanged lockfile is surfaced without a push.
+- **Fix applied:** `ci.yml` now runs `command-arguments: advisories licenses` (the
+  cargo-deny action already sets `command: check`, so `advisories licenses` are the
+  subcommands — *not* `check advisories licenses`, which would double the `check`). No
+  `[advisories]` table is needed for cargo-deny 0.19.x defaults. Verified locally:
+  `cargo deny check advisories licenses` → `advisories ok, licenses ok`. Also added a weekly
+  `schedule:` trigger so a newly-disclosed CVE in an unchanged lockfile surfaces without a
+  push. Job renamed `rust-licenses` → `rust-deny`.
 
-### M2 — Orphaned Python wheels enlarge the capsule attack surface
+### M2 — "Orphaned Python wheels"  `[RETRACTED — finding was wrong]`
 
-- **What:** `capsule/requirements.txt` hash-pins wheels that **no capsule code imports**:
-  `redis`, `jwcrypto`, `cryptography` (and their transitive `cffi`/`pycparser`). The only
-  things the capsule actually imports are `websockets` and `python-xlib` (Xlib); `numpy` and
-  `requests` come in transitively via `websockify`. JWE/crypto is handled in **Rust** now, so
-  `jwcrypto`/`cryptography` are leftovers from the `shrink-wrap` spike.
-- **Where:** `capsule/requirements.txt:9,13,21` (`cryptography`, `jwcrypto`, `redis`);
-  verified against `grep -rEi '^\s*(import|from)'` over `capsule/rootfs/` — `redis`,
-  `jwcrypto`, `cryptography` appear nowhere outside `requirements.txt`.
-- **Why:** Every package installed into the image is code that ships in the snapshot and
-  counts toward the supply-chain/CVE surface for no functional benefit. `redis` in particular
-  is wholly unexplained (it is not a `websockify` dependency).
-- **Fix:** Drop `redis`, `jwcrypto`, `cryptography`, `cffi`, `pycparser` from
-  `requirements.txt` unless a build step needs them. Verify the image still builds and DOOM
-  still renders (the render gate in `start.sh` will catch a regression). Keep the file to
-  exactly: `websockets`, `python-xlib`, `websockify`, and websockify's real transitive deps
-  (`numpy`, `requests`, `certifi`, `charset-normalizer`, `idna`, `urllib3`, `six`,
-  `typing-extensions`).
+- **Original claim:** `redis`, `jwcrypto`, `cryptography` (+ `cffi`/`pycparser`) are pinned
+  in `requirements.txt` but imported by no capsule code, so they could be dropped to shrink
+  the attack surface.
+- **Why it was wrong:** They are **real transitive dependencies of `websockify`**, not
+  orphans. Primary-source check — PyPI `requires_dist` for `websockify==0.13.0` is
+  `[numpy, requests, jwcrypto, redis]`, and `jwcrypto → cryptography → cffi → pycparser`. The
+  Dockerfile installs with `--require-hashes` and **no `--no-deps`**
+  (`capsule/Dockerfile:32-34`), so pip resolves websockify's full dependency tree and **every
+  one of those packages must have a hash present** — removing any of them breaks the image
+  build. The import-grep was correct (websockify only *imports* `redis`/`jwcrypto` inside its
+  token-auth plugins, which LambdaDoom doesn't use) but install-time resolution doesn't care
+  about runtime imports.
+- **Disposition:** **No change to `requirements.txt`.** Pruning would require
+  `pip install --no-deps` plus manually curating websockify's actually-imported subset, then a
+  full server-side aarch64 build + render-gate + noVNC verification to prove nothing broke —
+  unverifiable locally and not worth risking a confirmed-working capsule for a Low-value
+  surface trim. **Verification-gated future optimization, not shipped.**
+
+### M3 — Stale `cryptography` wheel hash breaks the capsule build on a modern host  `[FIXED + VERIFIED]`
+
+- **What:** `capsule/requirements.txt` pinned a single sha256 for `cryptography==49.0.0` that
+  matches only the older `manylinux_2_17`/`manylinux2014` wheel. On a current build host pip
+  selects the newer-glibc `manylinux_2_34` wheel (different hash), and under `--require-hashes`
+  this **fails the build** with "THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS
+  FILE." This is a **pre-existing breakage on `main`**, unrelated to the security review — it
+  was surfaced when the first live build in this session failed at the pip stage (~1m50s).
+- **Where:** `capsule/requirements.txt:9-10` (single-hash `cryptography` pin);
+  `capsule/Dockerfile:32-34` (`pip install --require-hashes`). Observed in the CloudWatch log
+  for image `l1test`: expected `36d1709f…`, got `ccac2bfe…` (the `manylinux_2_34` wheel).
+- **Why:** `--require-hashes` is strict and correct (it's the supply-chain control), but a
+  single platform hash is brittle: any host glibc that shifts pip's wheel selection breaks the
+  build for everyone. The whole project becomes unbuildable until the hash is refreshed.
+- **Fix applied + verified:** Added the other published aarch64 `cp311-abi3` glibc hashes for
+  `cryptography==49.0.0` (`manylinux_2_17`, `manylinux_2_28`, `manylinux_2_34`, musllinux) so
+  pip accepts whichever wheel matches the host. Verified: the next build (`l1test2`) passed the
+  pip stage and reached CREATED. (`cffi`, `charset-normalizer`, `numpy`, `websockets` have the
+  same single-glibc-hash shape but only their *musllinux* alternate is unlisted, which AL2023's
+  glibc host never selects — so they are not currently broken. Worth multi-hashing them
+  proactively if the build host ever changes; logged here, not changed.)
 
 ---
 
 ## LOW
 
-### L1 — In-VM stream services bind `0.0.0.0` with no per-service authentication
+### L1 — In-VM stream services bind `0.0.0.0` with no per-service authentication  `[FIXED + VERIFIED]`
 
 - **What:** `video_ws` (6903), `audio_ws` (6902), `input_ws` (6904), the readiness hook
   (9000), and `Xvnc` (`-SecurityTypes None`, 5901→6901) all listen on `0.0.0.0` inside the
@@ -86,12 +118,30 @@ Each finding lists **What / Where / Why / Fix**, sorted by severity.
   VM. If a future change broadened egress/ingress, or a co-resident service on the VM were
   compromised, there is no second factor. This is a **defense-in-depth gap**, not an open
   door.
-- **Fix:** Low-effort hardening: bind the stream services to `127.0.0.1` and have the AWS
-  ingress reach them via loopback if the platform allows; or add a shared-secret check on the
-  WS handshake. At minimum, document that port-scoping in the minted token (currently
-  6901-6904) is the load-bearing control and must never be widened to include 5901/9000.
+- **Fix — shipped AND live-verified (both halves):**
+  1. **Hook :9000 narrowed to loopback.** AWS probes the readiness hook at
+     `http://127.0.0.1:9000/...` (loopback — `docs/architecture.md:80`, `CLAUDE.md`), and
+     :9000 is never in the minted token's `allowedPorts`. Done in `capsule/.../start.sh`
+     (`ThreadingHTTPServer(("127.0.0.1", 9000), ...)`). **Verified:** the test image reached
+     CREATED, which only happens when the render-gated `/ready` 200 is delivered to AWS via
+     this hook — so loopback binding does not break readiness.
+  2. **Stream services 6902/6903/6904 narrowed to loopback.** Done in `video_ws.py`,
+     `audio_ws.py`, `input_ws.py` (`websockets.serve(handler, "127.0.0.1", PORT)`).
+     **Verified:** with the VM RUNNING and the Fork B proxy up, all three channels streamed
+     through the proxy — `/ldoom/video` returned 41,671 bytes of H.264, `/ldoom/audio`
+     returned the 19-byte OpusHead config frame, `/ldoom/input` accepted injected key events.
+     This proves the AWS MicroVM ingress reaches in-guest services **via loopback**, so the
+     bind change is safe — it was the one open question that blocked shipping this half, now
+     answered empirically.
+  3. **Load-bearing invariant documented in code.** A `SECURITY:` comment at the token-mint
+     site (`open.rs`) states that `allowedPorts` scoping is the control keeping the in-VM
+     services off the internet, and that 9000/5901 must never be added.
+- **Net effect:** every in-VM listener except websockify/Xvnc on :6901 (the display port,
+  which must stay reachable for the noVNC fallback) is now loopback-only. The externally
+  reachable surface is reduced to exactly the four token-scoped ports, all behind the AWS JWE
+  ingress.
 
-### L2 — Default egress is the public internet
+### L2 — Default egress is the public internet  `[FIXED: docs]`
 
 - **What:** Network connectors are intentionally omitted, so the MicroVM gets the
   Lambda-managed default of **`INTERNET_EGRESS`**. The capsule does not need outbound
@@ -101,11 +151,12 @@ Each finding lists **What / Where / Why / Fix**, sorted by severity.
 - **Why:** A compromised in-VM process (e.g. via a malicious WAD or a stream-service bug)
   could exfiltrate or beacon outbound. Documented as a non-goal, so this is informational
   hardening.
-- **Fix:** If the platform exposes an egress connector that denies all outbound, wire it in
-  for the runtime VM. Otherwise leave the documented note; it is an accepted trade-off for a
-  single-user demo.
+- **Fix applied (docs):** The mechanism already existed — `config.rs` has
+  `egress_connector_arn` and `up.rs:48-53` wires any non-empty value into `RunMicrovm`. So the
+  real fix was telling users how to use it: `docs/security.md` now documents setting
+  `egress_connector_arn` to a deny-all connector to lock egress down. No code change needed.
 
-### L3 — No CSPRNG reseed on resume (documented, currently not exercised)
+### L3 — No CSPRNG reseed on resume (documented, currently not exercised)  `[FIXED: docs]`
 
 - **What:** A resumed MicroVM replays frozen entropy — a CSPRNG seeded before the snapshot
   repeats its output. There is **no reseed/listener-bounce hook in the current native
@@ -119,12 +170,13 @@ Each finding lists **What / Where / Why / Fix**, sorted by severity.
   LambdaDoom, AWS terminates TLS at the endpoint, so the in-VM hop is plain HTTP/WS and this
   is **not exercised today**. The risk materializes only if a future capsule terminates TLS
   in-VM or generates keys/nonces.
-- **Fix:** No action needed for the current design. Before any future capsule does in-VM
-  crypto, add a `resume`-hook step that reseeds `/dev/urandom` (e.g. writes fresh entropy)
-  and bounces the affected listener. Update the `CLAUDE.md` note from "unverified" to
-  "absent by design; required if in-VM TLS is added."
+- **Fix applied (docs):** No code action is correct for the current design (in-VM hop is
+  plain; no entropy-sensitive crypto runs in the guest). Updated the `CLAUDE.md` note from
+  "**unverified**" to "**ABSENT BY DESIGN (verified 2026-06-26)**" with the explicit condition
+  under which a reseed/listener-bounce becomes required (any future in-VM TLS or key/nonce
+  generation). `docs/architecture.md` §7 already states this.
 
-### L4 — Release SHA256 sidecar is same-origin as the binary
+### L4 — Release SHA256 sidecar is same-origin as the binary  `[FIXED: docs]`
 
 - **What:** `deploy.sh` downloads `ldoom` from GitHub Releases and verifies it against a
   `.sha256` sidecar **downloaded from the same release**. An attacker who can replace the
@@ -136,13 +188,14 @@ Each finding lists **What / Where / Why / Fix**, sorted by severity.
   (build provenance), which `release.yml:68-71` produces — that *is* a real
   cryptographic integrity control tied to the workflow identity. The SHA256 step is therefore
   a transport-integrity check, not an authenticity one.
-- **Fix:** Mostly a docs/clarity fix. Keep attestation as the load-bearing control and make
-  it **non-skippable for `latest`** (it already requires a pinned version to skip — good).
-  Consider noting in the script comments that the sidecar guards against truncated downloads,
-  not tampering, and that attestation is the trust anchor. Building from source
-  (`LDOOM_BIN`) remains the strongest path.
+- **Fix applied (docs):** Added a comment block above `verify_sha256` in `deploy.sh`
+  spelling out that the sidecar is a transport-integrity check only (truncated/corrupt
+  downloads), **not** an authenticity control, and that `verify_attestation` (GitHub build
+  provenance bound to the workflow identity) is the cryptographic trust anchor. Confirmed
+  attestation is already non-skippable for `latest` (skip requires a pinned
+  `LAMBDADOOM_VERSION`, `deploy.sh:60-64`). No logic change needed.
 
-### L5 — `uninstall.sh` empties and deletes account resources with broad `|| true` swallowing
+### L5 — `uninstall.sh` empties and deletes account resources with broad `|| true` swallowing  `[FIXED]`
 
 - **What:** `uninstall.sh` runs `aws s3 rm s3://$BUCKET --recursive` and
   `cloudformation delete-stack` with errors suppressed (`|| true`, `2>/dev/null`). `$BUCKET`
@@ -155,10 +208,13 @@ Each finding lists **What / Where / Why / Fix**, sorted by severity.
   failure (e.g. wrong region resolved, stack-delete blocked by a non-empty bucket) is hidden
   behind `|| true`, leaving the user thinking cleanup succeeded when resources (and billing)
   remain.
-- **Fix:** Keep the existing non-empty guard. Surface failures instead of swallowing them:
-  drop blanket `2>/dev/null || true` on the delete-stack path and report the real error, or
-  print a final "verify in console" reminder. Consider confirming the bucket name belongs to
-  the stack (it already does via the query) before the recursive `rm`.
+- **Fix applied:** Kept the existing non-empty bucket guard and kept `ldoom rm` best-effort
+  (already-gone must stay non-fatal — deliberately did **not** add `set -e`, which would abort
+  a re-run on the first already-deleted resource). The destructive AWS steps (`s3 rm`,
+  `delete-stack`, `wait stack-delete-complete`) no longer swallow errors: each now reports a
+  `warning:` and sets `FAILED=1`, and the script exits non-zero with a "verify in the AWS
+  console (resources may still bill)" reminder if anything failed. Verified with `bash -n` and
+  `shellcheck` (both clean).
 
 ---
 

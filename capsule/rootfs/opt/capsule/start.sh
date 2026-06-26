@@ -23,7 +23,10 @@ class H(BaseHTTPRequestHandler):
         if n: self.rfile.read(n)
         self._resp()
     def log_message(self, *a): pass
-ThreadingHTTPServer(("0.0.0.0", 9000), H).serve_forever()
+# AWS probes the ready hook at http://127.0.0.1:9000/... (loopback). Bind loopback
+# only so :9000 is never part of the externally reachable surface — it is internal
+# and must NOT be added to the minted token's allowedPorts.
+ThreadingHTTPServer(("127.0.0.1", 9000), H).serve_forever()
 PY
 python3.11 /opt/hook.py & LOG "hook responder :9000 (503 until ready) pid $!"
 

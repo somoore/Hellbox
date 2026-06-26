@@ -45,6 +45,12 @@ sha256_file(){
   fi
 }
 
+# Transport-integrity check only: the .sha256 sidecar ships from the same release
+# as the binary, so an attacker who can swap the asset can swap its sidecar too.
+# This guards against truncated/corrupt downloads, NOT tampering. The cryptographic
+# trust anchor is verify_attestation (GitHub build provenance), which is bound to the
+# release workflow identity and cannot be forged by replacing release files. To avoid
+# trusting any prebuilt artifact, build from source and pass LDOOM_BIN.
 verify_sha256(){
   local file sumfile expected actual
   file="$1"; sumfile="$2"

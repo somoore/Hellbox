@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Weekly so a newly-disclosed advisory in an unchanged lockfile still surfaces.
+  schedule:
+    - cron: '0 12 * * 1'
 
 permissions:
   contents: read
@@ -27,8 +30,8 @@ jobs:
       - name: Test
         run: cargo test --features proxy
 
-  rust-licenses:
-    name: rust licenses
+  rust-deny:
+    name: rust deny (advisories + licenses)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +41,10 @@ jobs:
           manifest-path: rs-cli/Cargo.toml
           arguments: ""
           command: check
-          command-arguments: licenses
+          # advisories gates RUSTSEC CVEs (the careful rustls/webpki pinning in
+          # Cargo.toml has no regression guard otherwise); licenses keeps the
+          # allow-list policy. Verified locally: `cargo deny check advisories licenses`.
+          command-arguments: advisories licenses
 
   shell:
     name: shellcheck

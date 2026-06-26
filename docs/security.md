@@ -78,7 +78,12 @@ The parts I deliberately left out of scope:
   reseed on resume. See section 7 of [architecture.md](architecture.md).
 - **Default egress is the public internet.** Omitting the network connectors gives the
   Lambda-managed defaults (JWE-authenticated ingress, internet egress). The MicroVM can reach
-  the internet; it does not need to, but it is not network-isolated by default.
+  the internet; it does not need to (the WAD and engine are baked at build time), but it is not
+  network-isolated by default. **To lock egress down,** set `egress_connector_arn` in
+  `~/.lambdadoom/config.toml` to a connector that denies all outbound — `ldoom up` wires any
+  non-empty `egress_connector_arn` into `RunMicrovm` (see `up.rs`; leave it empty for the
+  managed default). The runtime MicroVM needs no outbound, so a deny-all egress connector is
+  safe.
 - **Not multi-tenant, not production.** No auth between browser and proxy beyond loopback
   binding, no rate limiting, no audit logging. Do not expose the proxy port off your machine.
 

@@ -39,6 +39,10 @@ pub async fn run(name: &str, no_open: bool) -> Result<()> {
         .create_microvm_auth_token()
         .microvm_identifier(&microvm_id)
         .expiration_in_minutes(TOKEN_TTL_MINUTES);
+    // SECURITY: the token's allowedPorts scoping is the load-bearing control that
+    // keeps the in-VM services (which bind 0.0.0.0 and self-authenticate nothing)
+    // off the public internet. Scope it to the display+stream ports ONLY. Never add
+    // the internal readiness hook (9000) or the raw VNC port (5901) here.
     for p in [port, audio_port, video_port, input_port] {
         tok_req = tok_req.allowed_ports(PortSpecification::Port(p));
     }

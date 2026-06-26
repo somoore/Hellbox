@@ -199,10 +199,13 @@ These were verified live; trust them.
 - **Fork B proxy is THE auth path.** Browsers can't set `X-aws-proxy-auth` and the
   query-string JWE returns 403, so `ldoom open` runs the local loopback proxy that
   injects the header. Do not relitigate Fork A.
-- **CSPRNG reseed on resume (design item, verify before relying on it).** A resumed VM
-  replays frozen entropy → identical TLS randomness. The reseed/TLS-bounce hooks existed
-  in the old skeleton; their status in the current native capsule is **unverified**.
-  Check before claiming it.
+- **CSPRNG reseed on resume — ABSENT BY DESIGN (verified 2026-06-26).** A resumed VM
+  replays frozen entropy → identical randomness. The current native capsule does **no**
+  reseed/TLS-bounce on resume (the `resume` hook is enabled in `build.rs` but unused for
+  this). This is safe **only because AWS terminates TLS at the endpoint** — the in-VM hop
+  is plain HTTP/WS, so no entropy-sensitive crypto runs in the guest. **Required before
+  any future capsule terminates TLS in-VM or generates keys/nonces:** add a `resume`-hook
+  step that reseeds the entropy pool and bounces the affected listener.
 
 ## Multi-region recipe (proven)
 
