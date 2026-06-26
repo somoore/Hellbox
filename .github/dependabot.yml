@@ -17,3 +17,35 @@ updates:
       actions:
         patterns:
           - "*"
+
+  # Rust crates. Convenience bumps — RUSTSEC advisories are already gated by
+  # cargo-deny (ci.yml rust-deny job). Cargo.lock keeps the hashes.
+  - package-ecosystem: cargo
+    directory: /rs-cli
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
+    labels:
+      - dependencies
+      - rust
+    groups:
+      cargo:
+        patterns:
+          - "*"
+
+  # Python wheels for the capsule. Bumps are validated by scripts/check-reqs.sh
+  # (hash-pinned, cp311/aarch64) in the capsule CI job.
+  - package-ecosystem: pip
+    directory: /capsule
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: deps
+    labels:
+      - dependencies
+      - python
+    groups:
+      pip:
+        patterns:
+          - "*"
