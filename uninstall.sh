@@ -34,6 +34,15 @@ for d in "${home_dirs[@]}"; do
   fi
 done
 
+# Stop a running loopback proxy (`hellbox open`) if one is still up — uninstall
+# should be self-contained whether or not the user Ctrl-C'd it first. Targets only
+# the hellbox proxy by command pattern; harmless if none is running.
+if command -v pkill >/dev/null 2>&1; then
+  if pkill -f 'hellbox(\.exe)? open' 2>/dev/null; then
+    say "Stopped the running hellbox proxy"
+  fi
+fi
+
 # Locate hellbox for MicroVM cleanup.
 DOOM=""
 for c in \

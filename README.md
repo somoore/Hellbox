@@ -52,9 +52,9 @@ off.
 > **Cost:** a suspended MicroVM is roughly cents per month, and a running, streamed session is
 > roughly $0.19 per hour before data transfer. The actual bill is:
 > `(running vCPU/GB-seconds) + snapshot read/write + snapshot storage + internet data transfer`.
-> Video/audio bitrate, region, and suspend/resume cycles matter. Suspend when you walk away,
-> or run `./uninstall.sh` to remove everything (the MicroVM, the image, the stack, and all local
-> state).
+> Video/audio bitrate, region, and suspend/resume cycles matter. Suspend when you walk away.
+> To remove everything: press `Ctrl-C` to stop the proxy, then run `./uninstall.sh` (it stops
+> any running proxy and deletes the MicroVM, the image, the stack, and all local state).
 
 > **Browser:** the low-latency H.264/Opus path uses WebCodecs, so use current Chrome or Edge
 > for the intended experience. Safari and Firefox support may lag; use `hellbox config set
