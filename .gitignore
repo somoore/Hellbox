@@ -90,3 +90,6 @@ Session.vim
 .\#*
 *.sublime-workspace
 tags
+
+# Internal doc kept locally, not published to the public repo.
+docs/generalizing.md

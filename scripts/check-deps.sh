@@ -9,9 +9,9 @@
 #              [sources] rejects unknown registries/git deps. cargo-deny enforces.
 #   - Python : capsule/requirements.txt uses pip --require-hashes (checked deeply by
 #              scripts/check-reqs.sh; here we assert the mode is on).
-#   - JS     : the only JS dep (playwright) is pulled by a dev-only `npm exec
-#              --package playwright@<pinned>` helper. Version-pinned, not hash-locked,
-#              not shipped — flagged as an accepted soft-pin, not a hard failure.
+#   - JS     : no committed package.json today. If any .mjs/.js gains an external
+#              import, it must be backed by a package.json + lockfile (warned here,
+#              FAILs once a package.json exists without a lockfile).
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
@@ -74,7 +74,7 @@ js_ext_imports="$(git ls-files '*.mjs' '*.js' | xargs -r grep -lE "from ['\"][^.
 if [ -n "$js_ext_imports" ] && [ "${js_lockless}" = 0 ] && ! git ls-files '*package.json' | grep -q .; then
   warn "external JS import(s) without any package.json/lockfile:"
   printf '%s\n' "$js_ext_imports" | sed 's/^/         /' >&2
-  warn "accepted soft-pin: scripts/capture-demo-media.sh runs these via \`npm exec --package <name>@<pinned>\` (dev-only demo helper, not shipped, version-pinned but not hash-locked). If JS ever ships in the product, add a package.json + lockfile and this becomes a hard FAIL."
+  warn "if this JS ships in the product, pin it via a package.json + lockfile; this becomes a hard FAIL."
 fi
 
 echo
