@@ -1,0 +1,70 @@
+name: release
+
+# Build the `ldoom` CLI for every supported OS/arch and attach the binaries to a
+# GitHub release, so `deploy.sh` can download a prebuilt binary (no compiling).
+#
+# Trigger by pushing a tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`), or run
+# manually with a tag name. Asset names match deploy.sh: ldoom-<os>-<arch>[.exe].
+#
+# Each target builds on a NATIVE runner so the C/asm crypto deps (aws-lc-rs, ring)
+# compile without cross-toolchains. The arm64 Linux/Windows runners are GitHub-hosted
+# (GA); on a private repo they consume Actions minutes.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write   # create the release + upload assets
+
+jobs:
+  build:
+    name: ${{ matrix.asset }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  asset: ldoom-linux-x86_64 }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, asset: ldoom-linux-arm64 }
+          # x86_64 mac is cross-compiled on an Apple-Silicon runner (Intel macos-13
+          # runners are scarce and queue indefinitely); macOS cross-compiles natively.
+          - { runner: macos-14,         target: x86_64-apple-darwin,       asset: ldoom-macos-x86_64 }
+          - { runner: macos-14,         target: aarch64-apple-darwin,      asset: ldoom-macos-arm64 }
+          - { runner: windows-latest,   target: x86_64-pc-windows-msvc,    asset: ldoom-windows-x86_64.exe }
+          - { runner: windows-11-arm,   target: aarch64-pc-windows-msvc,   asset: ldoom-windows-arm64.exe }
+    defaults:
+      run:
+        working-directory: rs-cli
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # aws-lc-rs needs NASM (x86 asm) + a C toolchain; cmake is preinstalled on hosted runners.
+      - uses: ilammy/setup-nasm@v1
+
+      - name: Build
+        run: cargo build --release --features proxy --target ${{ matrix.target }}
+
+      - name: Stage asset (unix)
+        if: runner.os != 'Windows'
+        run: cp "target/${{ matrix.target }}/release/ldoom" "${{ matrix.asset }}"
+
+      - name: Stage asset (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cp "target/${{ matrix.target }}/release/ldoom.exe" "${{ matrix.asset }}"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: rs-cli/${{ matrix.asset }}

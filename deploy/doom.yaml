@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  LambdaDoom prerequisites. The `doom` CLI drives the Lambda MicroVM lifecycle from
+  your machine; this stack only provisions what it needs in your account: an S3
+  bucket for build contexts and the two IAM roles CreateMicrovmImage (buildRoleArn)
+  and RunMicrovm (executionRoleArn) assume. After deploy, copy the Outputs into
+  ~/.lambdadoom/config.toml. Creates no network connectors on purpose, so MicroVMs
+  get the Lambda-managed defaults (JWE-auth HTTPS ingress + internet egress).
+
+  These resources reproduce the configuration verified working for LambdaDoom; the
+  role trust principal and permissions match the live roles exactly.
+
+Parameters:
+  BuildServicePrincipal:
+    Type: String
+    Default: lambda.amazonaws.com
+    Description: >
+      Service principal the build and execution roles trust. lambda.amazonaws.com is
+      verified working for Lambda MicroVMs; override only if AWS docs change it.
+
+Resources:
+  # Holds the zipped Dockerfile + capsule context that CreateMicrovmImage reads.
+  # Contexts are disposable, so expire them after 3 days. Private + encrypted.
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-build-context
+            Status: Enabled
+            ExpirationInDays: 3
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # buildRoleArn: assumed during the image build to read the context + write logs.
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Ref BuildServicePrincipal
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+      Policies:
+        - PolicyName: lambdadoom-build
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${ArtifactBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:*:${AWS::AccountId}:*'
+
+  # executionRoleArn: optional role the running MicroVM assumes. No permissions in
+  # this demo (the VM never calls back into AWS). Add policies if your capsule needs
+  # them (logs, secrets, etc.).
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Ref BuildServicePrincipal
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+
+Outputs:
+  Region:
+    Description: Region this stack and your MicroVMs live in.
+    Value: !Ref AWS::Region
+  ArtifactBucket:
+    Description: artifact_bucket for ~/.lambdadoom/config.toml
+    Value: !Ref ArtifactBucket
+  BuildRoleArn:
+    Description: build_role_arn for ~/.lambdadoom/config.toml
+    Value: !GetAtt BuildRole.Arn
+  ExecutionRoleArn:
+    Description: execution_role_arn for ~/.lambdadoom/config.toml
+    Value: !GetAtt ExecutionRole.Arn

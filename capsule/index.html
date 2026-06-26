@@ -1,0 +1,365 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DOOM on AWS Lambda MicroVM</title>
+<style>
+  :root{
+    --bg:#0A0B0D; --panel-top:#13161B; --panel-bot:#0C0E12; --hairline:#20242B;
+    --text:#ECE8DF; --muted:#8B919B; --muted2:#7E848E;
+    --ember:#FF6B1A; --ember2:#FF8A3D; --ember-dk:#D9480F;
+    --green:#57C77E; --amber:#FFB020; --chip:#0E1014; --keycap:#15181D;
+    --font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Roboto,Helvetica,Arial,sans-serif;
+    --font-mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{display:flex;flex-direction:column;background:var(--bg);color:var(--text);
+    font-family:var(--font-ui);overflow:hidden}
+
+  /* ---- top bar ---- */
+  #bar{display:flex;align-items:center;justify-content:space-between;height:64px;
+    flex-shrink:0;padding:0 24px;background:linear-gradient(180deg,var(--panel-top) 0%,var(--panel-bot) 100%);
+    border-bottom:1px solid var(--hairline);box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+  .brand{display:flex;align-items:center;gap:14px;min-width:0}
+  .mark{display:flex;align-items:center;justify-content:center;width:40px;height:32px;
+    border-radius:9px;flex-shrink:0;color:#1A0E06;font-weight:900;font-size:16px;letter-spacing:-.04em;
+    background:linear-gradient(150deg,var(--ember2) 0%,var(--ember) 55%,var(--ember-dk) 100%);
+    box-shadow:0 0 0 1px rgba(255,138,61,.35),0 4px 14px rgba(255,107,26,.30)}
+  .word{display:flex;align-items:baseline;gap:1px;font-size:18px;letter-spacing:.01em}
+  .word .dim{font-weight:600;color:#9CA1AB}
+  .word .strong{font-weight:900;color:var(--text)}
+  .vrule{width:1px;height:22px;background:#2A2E35;flex-shrink:0}
+  .subtitle{font-size:11px;font-weight:600;letter-spacing:.14em;color:var(--muted2);white-space:nowrap}
+
+  .controls{display:flex;align-items:center;gap:14px}
+  .chip{display:flex;align-items:center;gap:10px;height:34px;padding:0 14px;border-radius:9px;
+    background:var(--chip);border:1px solid var(--hairline)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 0 3px rgba(87,199,126,.16),0 0 8px rgba(87,199,126,.6)}
+  .dot.connecting{background:var(--amber);
+    box-shadow:0 0 0 3px rgba(255,176,32,.16),0 0 8px rgba(255,176,32,.6)}
+  .live{font-weight:700;font-size:11px;letter-spacing:.12em;color:#C7CBD2}
+  .vrule.small{height:16px;background:#23272E}
+  .telemetry{font-family:var(--font-mono);font-weight:500;font-size:12px;letter-spacing:.01em;color:#8E949E;white-space:nowrap}
+
+  .audio-btn{display:flex;align-items:center;justify-content:center;width:36px;height:36px;
+    padding:0;border-radius:9px;background:var(--keycap);border:1px solid #2A2E35;color:#C7CBD2;
+    cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+  .audio-btn:hover{border-color:#3A4049;color:var(--text)}
+  .audio-btn .ico{display:flex;align-items:center;justify-content:center;color:inherit}
+  .audio-btn .ico-on{display:none}
+  .audio-btn.on{background:linear-gradient(180deg,var(--ember2) 0%,var(--ember) 100%);
+    border-color:transparent;color:#1A0E06;box-shadow:0 0 0 1px rgba(255,138,61,.4),0 4px 14px rgba(255,107,26,.30)}
+  .audio-btn.on .ico-off{display:none}
+  .audio-btn.on .ico-on{display:flex}
+
+  /* ---- game stage ---- */
+  #wrap{position:relative;flex:1;min-height:0;overflow:hidden;
+    background:radial-gradient(125% 90% at 50% 102%,rgba(255,107,26,.12) 0%,rgba(255,107,26,0) 46%),#050608;
+    box-shadow:inset 0 0 220px 50px rgba(0,0,0,.65),inset 0 1px 0 rgba(255,255,255,.02)}
+  #wrap iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;z-index:1}
+  #wrap canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
+    display:block;background:#000;outline:none;z-index:1}
+
+  /* ---- boot / resuming overlay ---- */
+  #boot{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:22px;pointer-events:none;
+    background:radial-gradient(80% 60% at 50% 45%,rgba(255,107,26,.06) 0%,rgba(0,0,0,0) 60%)}
+  .spinner{width:54px;height:54px;border-radius:50%;border:3px solid #1C2026;
+    border-top-color:var(--ember);border-right-color:var(--ember);
+    box-shadow:0 0 22px rgba(255,107,26,.25);animation:spin .9s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .boot-copy{display:flex;flex-direction:column;align-items:center;gap:9px;text-align:center;padding:0 24px}
+  .boot-title{font-weight:700;font-size:24px;letter-spacing:-.01em;color:var(--text)}
+  .boot-sub{font-weight:400;font-size:14px;line-height:20px;color:var(--muted)}
+  .boot-steps{display:flex;flex-direction:column;gap:11px;padding:16px 20px;border-radius:12px;
+    background:rgba(13,15,19,.6);border:1px solid #1C2026}
+  .step{display:flex;align-items:center;gap:11px}
+  .step .ico{display:flex;align-items:center;justify-content:center;width:16px;height:16px;flex-shrink:0}
+  .step span{font-family:var(--font-mono);font-weight:500;font-size:12px;color:#9AA0AA}
+  .step.cur span{color:var(--text)}
+  .pulse{width:8px;height:8px;border-radius:50%;background:var(--ember);
+    box-shadow:0 0 0 3px rgba(255,107,26,.18),0 0 8px rgba(255,107,26,.6);
+    animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  /* ---- controls hint ---- */
+  #hint{position:absolute;left:20px;bottom:20px;z-index:4;display:flex;align-items:center;gap:14px;
+    height:40px;padding:0 16px;border-radius:11px;pointer-events:none;
+    background:rgba(9,10,13,.72);border:1px solid #1F232A;box-shadow:0 10px 30px rgba(0,0,0,.45);
+    animation:hintfade .6s ease 10s forwards}
+  @keyframes hintfade{to{opacity:0;visibility:hidden}}
+  #hint .grp{display:flex;align-items:center;gap:7px}
+  #hint .lbl{font-weight:600;font-size:10px;letter-spacing:.13em;color:var(--muted2)}
+  .keycap{display:flex;align-items:center;justify-content:center;min-width:22px;height:22px;
+    padding:0 7px;border-radius:5px;background:var(--keycap);border:1px solid #2A2E35;border-bottom-width:2px;
+    font-family:var(--font-mono);font-weight:600;font-size:11px;color:#C7CBD2}
+
+  /* ---- responsive ---- */
+  @media (max-width:680px){
+    #bar{height:54px;padding:0 14px}
+    .mark{width:34px;height:28px;font-size:14px}
+    .word{font-size:16px}
+    .subtitle,.brand .vrule{display:none}
+    .chip .telemetry,.chip .vrule.small{display:none}
+    .chip{height:32px;padding:0 12px}
+    #hint{display:none}
+    .boot-title{font-size:20px}
+  }
+</style>
+</head>
+<body>
+  <div id="bar">
+    <div class="brand">
+      <div class="mark">&#955;D</div>
+      <div class="word"><span class="dim">LAMBDA</span><span class="strong">DOOM</span></div>
+      <div class="vrule"></div>
+      <span class="subtitle">RUNNING ON AWS&#8201;LAMBDA MICROVM</span>
+    </div>
+    <div class="controls">
+      <div class="chip">
+        <span id="livedot" class="dot connecting"></span>
+        <span id="livelabel" class="live">BOOTING</span>
+        <span class="vrule small"></span>
+        <span id="status" class="telemetry">connecting&#8230;</span>
+      </div>
+      <button id="go" class="audio-btn" title="Enable sound" aria-label="Enable sound">
+        <span class="ico ico-off"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg></span>
+        <span class="ico ico-on"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg></span>
+      </button>
+    </div>
+  </div>
+
+  <div id="wrap">
+    <div id="boot">
+      <div class="spinner"></div>
+      <div class="boot-copy">
+        <span class="boot-title" id="boot-title">Booting DOOM</span>
+        <span class="boot-sub" id="boot-sub">Cold-starting a Firecracker microVM on AWS Lambda</span>
+      </div>
+      <div class="boot-steps">
+        <div class="step"><span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#57C77E" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg></span><span id="boot-s1">Snapshot restored</span></div>
+        <div class="step"><span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#57C77E" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg></span><span id="boot-s2">microVM running</span></div>
+        <div class="step cur"><span class="ico"><span class="pulse"></span></span><span>Waiting for first frame&#8230;</span></div>
+      </div>
+    </div>
+    <div id="hint">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FF6B1A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h0M10 10h0M14 10h0M18 10h0M8 14h8"/></svg>
+      <div class="grp"><span class="lbl">MOVE</span><span class="keycap">W A S D</span></div>
+      <div class="vrule small" style="height:16px;background:#23272E"></div>
+      <div class="grp"><span class="lbl">FIRE</span><span class="keycap">Ctrl</span></div>
+      <div class="vrule small" style="height:16px;background:#23272E"></div>
+      <div class="grp"><span class="lbl">USE</span><span class="keycap">Space</span></div>
+    </div>
+  </div>
+
+<script>
+const setStatus = m => { document.getElementById('status').textContent = m; };
+// Display backend: H.264/WebCodecs is the DEFAULT (so bare `/` shows the full game);
+// pass ?display=vnc to fall back to noVNC.
+const H264 = new URLSearchParams(location.search).get('display') !== 'vnc';
+// Resumed-from-suspend reload (the proxy adds ?resumed=1) shows "Resuming" copy.
+const RESUMED = new URLSearchParams(location.search).get('resumed') === '1';
+const wrap = document.getElementById('wrap');
+// Actual source resolution (the app may run at e.g. 640x480); learned from the first
+// decoded frame and used for BOTH canvas sizing and input coordinate mapping.
+let vidW = 1280, vidH = 720;
+
+if (RESUMED) {
+  document.getElementById('boot-title').textContent = 'Resuming';
+  document.getElementById('boot-sub').textContent = 'Restoring your session from a live memory snapshot';
+  document.getElementById('boot-s1').textContent = 'Memory snapshot located';
+  document.getElementById('boot-s2').textContent = 'Reattaching video & audio';
+  document.getElementById('livelabel').textContent = 'RESUMING';
+}
+
+// First decoded frame (or VNC connect): hide the boot overlay, flip the status to LIVE.
+let isLive = false;
+function goLive() {
+  if (isLive) return; isLive = true;
+  const b = document.getElementById('boot'); if (b) b.style.display = 'none';
+  const d = document.getElementById('livedot'); if (d) d.classList.remove('connecting');
+  const l = document.getElementById('livelabel'); if (l) l.textContent = 'LIVE';
+}
+function hideBoot() { const b = document.getElementById('boot'); if (b) b.style.display = 'none'; }
+
+if (H264) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1280; canvas.height = 720; canvas.id = 'screen'; canvas.tabIndex = 0;
+  wrap.appendChild(canvas);
+  startVideo(canvas);
+  startInput(canvas);
+  canvas.focus();
+} else {
+  // noVNC connects its WS to same-origin path "websockify" (proxy -> :6901).
+  const ifr = document.createElement('iframe');
+  ifr.src = 'vnc.html?autoconnect=1&resize=remote&path=websockify&reconnect=1';
+  ifr.setAttribute('allow', 'autoplay');
+  ifr.addEventListener('load', goLive);
+  wrap.appendChild(ifr);
+}
+
+// ---- H.264 video: WS /shrinkvideo -> WebCodecs VideoDecoder -> canvas ----
+// Each binary frame is [1 byte: 1=key,0=delta] + a raw Annex-B H.264 access unit.
+// We wait for the first keyframe, then decode frames straight to a canvas — no MSE
+// buffering, so latency stays low.
+function startVideo(canvas) {
+  if (!('VideoDecoder' in window)) {
+    setStatus('video needs WebCodecs (use Chrome/Edge)');
+    hideBoot();
+    return;
+  }
+  const ctx = canvas.getContext('2d');
+  let frames = 0, bytes = 0, sawKey = false, vts = 0;
+  const dec = new VideoDecoder({
+    output: frame => {
+      // Match the canvas to the real source size (so drawImage is 1:1 and input
+      // coordinates map correctly); CSS scales the canvas to fill the viewport.
+      const w = frame.displayWidth || frame.codedWidth;
+      const h = frame.displayHeight || frame.codedHeight;
+      if (w && h && (vidW !== w || vidH !== h || canvas.width !== w)) {
+        vidW = w; vidH = h; canvas.width = w; canvas.height = h;
+      }
+      ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+      frame.close();
+      if (frames === 0) goLive();   // first decoded frame: game is live
+      frames++;
+    },
+    error: e => setStatus('video decode error: ' + e.message),
+  });
+  // Baseline profile, level 3.1 (matches the capsule's x264 settings). Annex-B mode
+  // (no `description`) — the keyframe AUs carry in-band SPS/PPS.
+  dec.configure({ codec: 'avc1.42E01F', optimizeForLatency: true, hardwareAcceleration: 'no-preference' });
+
+  const ws = new WebSocket('ws://' + location.host + '/shrinkvideo');
+  ws.binaryType = 'arraybuffer';
+  ws.onopen  = () => setStatus('connected (H.264) — waiting for keyframe');
+  ws.onclose = () => setStatus('video closed');
+  ws.onerror = () => setStatus('video error');
+  ws.onmessage = ev => {
+    const d = new Uint8Array(ev.data);
+    const key = d[0] === 1;
+    const au = d.subarray(1);
+    bytes += au.length;
+    if (dec.state !== 'configured') return;
+    if (!sawKey) { if (!key) return; sawKey = true; }  // join on first keyframe
+    try {
+      dec.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: vts, data: au }));
+    } catch (e) { /* a bad AU shouldn't tear down the stream */ }
+    vts += 33333;  // ~30 fps
+  };
+  setInterval(() => setStatus(
+    'H.264 · ' + frames + ' frames · ' + (bytes / 1024 | 0) + ' KiB · ~' +
+    (bytes * 8 / 1000 | 0) + ' kbit total'), 1000);
+}
+
+// ---- Input: capture keyboard/mouse, send to WS /shrinkinput (-> XTEST on :1) ----
+function startInput(canvas) {
+  const ws = new WebSocket('ws://' + location.host + '/shrinkinput');
+  const send = o => { if (ws.readyState === 1) ws.send(JSON.stringify(o)); };
+  // Keys we must not let the browser act on (scrolling, focus change, etc.).
+  const SWALLOW = new Set([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab']);
+  window.addEventListener('keydown', e => {
+    send({ t: 'k', down: true, key: e.key });
+    if (SWALLOW.has(e.key)) e.preventDefault();
+  });
+  window.addEventListener('keyup', e => {
+    send({ t: 'k', down: false, key: e.key });
+    if (SWALLOW.has(e.key)) e.preventDefault();
+  });
+  // Absolute pointer: map canvas display coords -> the 1280x720 source.
+  canvas.addEventListener('mousemove', e => {
+    const r = canvas.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width * vidW;
+    const y = (e.clientY - r.top) / r.height * vidH;
+    send({ t: 'm', x: Math.max(0, Math.min(vidW - 1, x | 0)), y: Math.max(0, Math.min(vidH - 1, y | 0)) });
+  });
+  canvas.addEventListener('mousedown', e => { canvas.focus(); send({ t: 'b', button: e.button, down: true }); e.preventDefault(); });
+  canvas.addEventListener('mouseup',   e => { send({ t: 'b', button: e.button, down: false }); e.preventDefault(); });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+}
+
+// ---- Audio (shared by both display modes): WS /shrinkaudio -> Opus -> Web Audio ----
+// The speaker button toggles sound: first click builds the Opus pipeline; further
+// clicks mute/unmute by suspending/resuming the AudioContext (the WS stays connected).
+// The server streams OPUS (~18x less egress than raw PCM):
+//   * frame #1  = the Opus identification header (OpusHead) -> decoder description.
+//   * frames 2+ = one raw Opus packet each (a 20 ms / 48 kHz / stereo frame).
+// Playback SCHEDULES each decoded 20 ms frame back-to-back on the Web Audio clock
+// (gapless), with an adaptive lead that only grows on real underruns.
+const audioBtn = document.getElementById('go');
+let audioCtx = null, audioOn = false;
+function setAudioUI(on) {
+  audioOn = on;
+  audioBtn.classList.toggle('on', on);
+  audioBtn.title = on ? 'Mute sound' : 'Enable sound';
+  audioBtn.setAttribute('aria-label', on ? 'Mute sound' : 'Enable sound');
+}
+audioBtn.onclick = () => {
+  if (!('AudioDecoder' in window)) {
+    setStatus("audio needs WebCodecs (use Chrome/Edge)");
+    return;
+  }
+  if (!audioCtx) { enableAudio(); return; }        // first click: build the pipeline
+  if (audioOn) { audioCtx.suspend(); setAudioUI(false); }   // mute
+  else { audioCtx.resume(); setAudioUI(true); }            // unmute
+};
+function enableAudio() {
+  const actx = new (window.AudioContext || window.webkitAudioContext)({
+    sampleRate: 48000, latencyHint: 'interactive',
+  });
+  audioCtx = actx;
+  actx.resume();
+  setAudioUI(true);
+
+  let playHead = 0;          // next scheduled start time (ctx clock)
+  let lead = 0.045;          // target scheduling lead; grows on underrun
+  const LEAD_MAX = 0.18, LEAD_STEP = 0.02;
+  let packets = 0, underruns = 0;
+
+  const decoder = new AudioDecoder({
+    output: data => {
+      const ch = data.numberOfChannels, n = data.numberOfFrames;
+      const ab = actx.createBuffer(ch, n, data.sampleRate);
+      for (let c = 0; c < ch; c++) {
+        const tmp = new Float32Array(n);
+        data.copyTo(tmp, { planeIndex: c, format: 'f32-planar' });
+        ab.getChannelData(c).set(tmp);
+      }
+      data.close();
+      const now = actx.currentTime;
+      if (playHead < now + 0.001) {
+        if (playHead !== 0) { underruns++; lead = Math.min(LEAD_MAX, lead + LEAD_STEP); }
+        playHead = now + lead;
+      }
+      const src = actx.createBufferSource();
+      src.buffer = ab;
+      src.connect(actx.destination);
+      src.start(playHead);
+      playHead += ab.duration;
+    },
+    error: e => setStatus("audio decode error: " + e.message),
+  });
+
+  let configured = false;
+  let ts = 0;                          // microseconds; +20 ms per Opus frame.
+  const ws = new WebSocket("ws://" + location.host + "/shrinkaudio");
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = ev => {
+    const buf = new Uint8Array(ev.data);
+    if (!configured) {
+      decoder.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2, description: buf });
+      configured = true;
+      return;
+    }
+    if (decoder.state !== 'configured') return;
+    decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: ts, data: buf }));
+    ts += 20000;
+    packets++;
+  };
+}
+</script>
+</body>
+</html>

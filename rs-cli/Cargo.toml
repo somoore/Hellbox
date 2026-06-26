@@ -1,0 +1,114 @@
+[package]
+name = "lambdadoom"
+version = "1.0.0"
+edition = "2024"
+description = "Run native DOOM inside an AWS Lambda MicroVM, streamed to a browser tab"
+license = "Apache-2.0"
+
+[[bin]]
+name = "ldoom"
+path = "src/main.rs"
+
+[dependencies]
+# CLI + runtime
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "net", "signal"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# config / state / paths
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+directories = "5"          # ~/.shrink on mac/win/linux
+
+# AWS
+aws-config = "1"
+# `default-features = false` to drop the SDK crates' legacy `rustls` feature
+# (= aws-smithy-runtime/tls-rustls → rustls 0.21 / vulnerable rustls-webpki 0.101.x).
+# We keep the rest of their defaults, including the modern `default-https-client`
+# (rustls 0.23 / aws-lc-rs). aws-config's own default is already legacy-free and it
+# pulls sso/sts with default-features=false, so this fully removes rustls 0.21.
+aws-sdk-s3 = { version = "1", default-features = false, features = [
+    "sigv4a", "http-1x", "default-https-client", "rt-tokio",
+] } # upload the build context
+# Official AWS SDK for the Lambda MicroVMs API (Smithy-generated).
+aws-sdk-lambdamicrovms = { version = "1", default-features = false, features = [
+    "default-https-client", "rt-tokio",
+] }
+
+# build artifact
+zip = "0.6"
+walkdir = "2"              # recurse capsule/ when building the context zip
+
+# open the browser tab (the "double-click")
+webbrowser = "0.8"
+
+[features]
+# Fork B (loopback reverse-proxy that injects X-aws-proxy-auth/-port) is THE
+# browser path — the MicroVM endpoint 403s a header-less request — so build it
+# by default. Kept as a named feature for modularity.
+default = ["proxy"]
+proxy = [
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:http-body-util",
+    "dep:tokio-tungstenite",
+    "dep:http",
+    "dep:reqwest",
+    "dep:bytes",
+    "dep:futures-util",
+    "dep:rustls",
+]
+
+[dependencies.hyper]
+version = "1"
+optional = true
+features = ["server", "http1"]
+
+# Tokio IO glue + body helpers for hyper 1.x (TokioIo, Full, BodyExt).
+[dependencies.hyper-util]
+version = "0.1"
+optional = true
+features = ["tokio"]
+
+[dependencies.http-body-util]
+version = "0.1"
+optional = true
+
+[dependencies.bytes]
+version = "1"
+optional = true
+
+[dependencies.futures-util]
+version = "0.3"
+optional = true
+
+# WSS upstream for the WebSocket-upgrade path; rustls so no OpenSSL on Windows.
+# 0.24 rides rustls 0.23 (webpki 0.103), deduping onto reqwest's TLS stack and
+# dropping the vulnerable webpki 0.102 that 0.21's rustls 0.22 pulled in.
+[dependencies.tokio-tungstenite]
+version = "0.24"
+optional = true
+features = ["rustls-tls-webpki-roots", "connect"]
+
+# TLS forward client for the plain-HTTP path. rustls (no native-tls/OpenSSL).
+[dependencies.reqwest]
+version = "0.12"
+optional = true
+default-features = false
+features = ["rustls-tls", "http2"]
+
+[dependencies.http]
+version = "1"
+optional = true
+
+# The dependency tree carries two rustls crypto providers — aws-lc-rs (AWS SDK) and
+# ring (the WebSocket TLS stack) — so rustls 0.23 cannot auto-select one and the WSS
+# upstream panics at the handshake. We depend on rustls directly to install aws-lc-rs
+# as the explicit process-default in main(); see src/main.rs.
+[dependencies.rustls]
+version = "0.23"
+optional = true
+features = ["aws_lc_rs"]

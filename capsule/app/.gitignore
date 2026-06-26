@@ -1,0 +1,9 @@
+# Capsule payload drop zone.
+#
+# Drop a WAD here to override the shareware default and `ldoom build` stages it into
+# the image at /home/app/app. NONE of it is committed: the payload is per-user, and
+# this project never ships a WAD or a binary in git (the shareware DOOM1.WAD is
+# fetched at build time). Only the docs are tracked, so the directory stays in the repo.
+*
+!.gitignore
+!README.md

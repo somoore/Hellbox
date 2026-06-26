@@ -1,0 +1,12 @@
+# Capsule runtime scripts execute on Linux (in the MicroVM) — they MUST be LF, or a
+# CRLF shebang becomes `#!/usr/bin/env bash\r` and the guest fails with
+# `env: 'bash\r': No such file or directory`. Force LF for everything that runs in
+# the capsule, regardless of the dev host's autocrlf setting. Windows shims stay CRLF.
+*.sh        text eol=lf
+*.py        text eol=lf
+*.html      text eol=lf
+*.conf      text eol=lf
+*.args      text eol=lf
+Dockerfile  text eol=lf
+*.command   text eol=lf
+*.bat       text eol=crlf
