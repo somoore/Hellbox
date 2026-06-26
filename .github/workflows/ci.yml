@@ -12,8 +12,98 @@ permissions:
   contents: read
 
 jobs:
+  # Decide which code checks are relevant to this change. A docs-only commit
+  # (e.g. just *.md) lights up nothing here, so every code job below is skipped —
+  # but the `secrets` job has NO gate and always runs, so security is never traded
+  # away for speed. Skipped `if:` jobs report SUCCESS, so this stays compatible with
+  # required-status-check branch protection (no job gets stuck "Expected").
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.f.outputs.rust }}
+      python: ${{ steps.f.outputs.python }}
+      js: ${{ steps.f.outputs.js }}
+      shell: ${{ steps.f.outputs.shell }}
+      capsule: ${{ steps.f.outputs.capsule }}
+      deps: ${{ steps.f.outputs.deps }}
+      cfn: ${{ steps.f.outputs.cfn }}
+      code: ${{ steps.f.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          # Each category maps to the files that affect that job. Changing the
+          # workflow itself ('.github/workflows/ci.yml') re-runs every category, so
+          # it's listed in each filter (a paths-filter list must be flat globs —
+          # YAML anchors nest a sub-list and break matching, so spell it out).
+          filters: |
+            rust:
+              - '.github/workflows/ci.yml'
+              - 'rs-cli/**'
+            python:
+              - '.github/workflows/ci.yml'
+              - '**/*.py'
+              - '.flake8'
+            js:
+              - '.github/workflows/ci.yml'
+              - '**/*.mjs'
+              - '**/*.js'
+            shell:
+              - '.github/workflows/ci.yml'
+              - '**/*.sh'
+            capsule:
+              - '.github/workflows/ci.yml'
+              - 'capsule/**'
+              - 'scripts/check-reqs.sh'
+            deps:
+              - '.github/workflows/ci.yml'
+              - '**/Cargo.toml'
+              - '**/Cargo.lock'
+              - '**/requirements*.txt'
+              - '**/package.json'
+              - 'deny.toml'
+              - 'scripts/check-deps.sh'
+            cfn:
+              - '.github/workflows/ci.yml'
+              - 'deploy/**'
+            # Any non-doc source file — gates the cross-language duplicate scan.
+            code:
+              - '.github/workflows/ci.yml'
+              - 'rs-cli/**'
+              - 'capsule/**'
+              - 'scripts/**'
+              - '**/*.rs'
+              - '**/*.py'
+              - '**/*.mjs'
+              - '**/*.js'
+              - '**/*.sh'
+
+  # SECURITY: always runs, on every commit, regardless of which files changed.
+  # A secret can land in any file type (a token pasted into a README, a key in a
+  # docs snippet), so this is never path-filtered. Scans full history.
+  secrets:
+    name: secrets (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          VER=8.30.1
+          curl -fsSL -o /tmp/gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
+          sudo tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: Scan full history
+        run: gitleaks detect --no-banner --redact --source .
+
   rust:
     name: rust
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -32,6 +122,10 @@ jobs:
 
   rust-deny:
     name: rust deny (advisories + licenses)
+    needs: changes
+    # Deps changes OR the scheduled run (so a new advisory in an unchanged lockfile
+    # still surfaces even though no files changed).
+    if: needs.changes.outputs.deps == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +143,8 @@ jobs:
 
   shell:
     name: shellcheck
+    needs: changes
+    if: needs.changes.outputs.shell == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +155,8 @@ jobs:
 
   cloudformation:
     name: cfn-lint
+    needs: changes
+    if: needs.changes.outputs.cfn == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,6 +172,8 @@ jobs:
   # Dockerfile smells, and broken capsule Python — the realistic failure modes.
   capsule:
     name: capsule
+    needs: changes
+    if: needs.changes.outputs.capsule == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -94,29 +194,11 @@ jobs:
           sudo apt-get update && sudo apt-get install -y shellcheck
           shellcheck capsule/rootfs/opt/capsule/*.sh
 
-  # Hardcoded-secret scan over the full history (pre-commit only sees the diff).
-  # Run the gitleaks binary directly — the v2 action now requires GITHUB_TOKEN and
-  # carries org-license friction; the plain CLI has neither and matches our other jobs.
-  secrets:
-    name: secrets (gitleaks)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Install gitleaks
-        run: |
-          VER=8.30.1
-          curl -fsSL -o /tmp/gitleaks.tgz \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
-          sudo tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
-          gitleaks version
-      - name: Scan full history
-        run: gitleaks detect --no-banner --redact --source .
-
   # Python lint (capsule stream/input/focus scripts). Reads .flake8.
   python:
     name: python (flake8)
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -129,6 +211,8 @@ jobs:
   # JS syntax check for the one demo .mjs (no eslint footprint for ~40 lines).
   javascript:
     name: javascript (node --check)
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -140,6 +224,8 @@ jobs:
   # Supply-chain pin/hash gate across cargo/pip/npm.
   deps:
     name: dependency pins
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -149,6 +235,8 @@ jobs:
   # Duplicate-code detection across Rust/Python/Bash/JS (threshold 0 in .jscpd.json).
   duplication:
     name: duplicate code (jscpd)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
