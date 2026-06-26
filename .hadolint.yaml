@@ -1,0 +1,21 @@
+# hadolint config for capsule/Dockerfile.
+# We ignore rules that flag DELIBERATE, accepted choices in this Dockerfile so the
+# capsule CI job catches NEW/real problems instead of relitigating existing style.
+# Everything not listed here stays active.
+ignored:
+  # DL3041: pin dnf package versions. We deliberately don't pin OS packages; the
+  # security-critical artifacts (ffmpeg, SDL2, Chocolate Doom, the WAD, and every
+  # Python wheel) are SHA256-pinned instead — see the ARGs and --require-hashes.
+  - DL3041
+  # DL3040: `dnf clean all` missing. The one flagged RUN uses `|| true` on an
+  # optional-deps loop; clean is handled on the mandatory installs.
+  - DL3040
+  # DL3003: use WORKDIR to cd. The flagged step cds inside a subshell-style build.
+  - DL3003
+  # DL4006: set `pipefail` before piped RUN. The pipes are `... | sha256sum -c -`
+  # integrity checks; a failure there already aborts via `set -e`/`&&` chaining.
+  # TODO(optional hardening): add `SHELL ["/bin/bash","-o","pipefail","-c"]` and drop this.
+  - DL4006
+  # SC2012: use find instead of ls. The flagged `ls ... | head -1` runs on a
+  # build-controlled directory with known filenames.
+  - SC2012

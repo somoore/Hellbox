@@ -1,0 +1,28 @@
+# Fast local guards. Install once: `pip install pre-commit && pre-commit install`.
+# Heavier checks (clippy, cargo test, cfn-lint, capsule lint) run in CI — see
+# .github/workflows/ci.yml. Bypass in an emergency with `git commit --no-verify`.
+repos:
+  - repo: local
+    hooks:
+      # Catches the M3 class: a capsule wheel hash that no longer matches the wheel
+      # the Dockerfile will pull. Resolves against cp311/aarch64 so it works on any host.
+      - id: capsule-reqs
+        name: verify capsule wheel hashes (cp311/aarch64)
+        language: script
+        entry: scripts/check-reqs.sh
+        files: ^capsule/requirements\.txt$
+        pass_filenames: false
+
+      - id: cargo-fmt
+        name: cargo fmt --check
+        language: system
+        entry: bash -c 'cd rs-cli && cargo fmt --check'
+        files: ^rs-cli/.*\.rs$
+        pass_filenames: false
+
+      - id: shellcheck
+        name: shellcheck
+        language: system
+        entry: bash -c 'shellcheck "$@"' --
+        files: \.sh$
+        # embedded heredoc Python in capsule scripts is fine; shellcheck only reads shell.
