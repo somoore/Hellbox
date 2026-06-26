@@ -20,9 +20,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # config / state / paths
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
-directories = "5"          # ~/.hellbox on mac/win/linux
-getrandom = "0.2"          # per-session loopback control secret
+toml = "1.1"
+directories = "6"          # ~/.hellbox on mac/win/linux
+getrandom = "0.3"          # per-session loopback control secret
 
 # AWS
 aws-config = "1"
@@ -40,11 +40,11 @@ aws-sdk-lambdamicrovms = { version = "1", default-features = false, features = [
 ] }
 
 # build artifact
-zip = "0.6"
+zip = "8.6"
 walkdir = "2"              # recurse capsule/ when building the context zip
 
 # open the browser tab (the "double-click")
-webbrowser = "0.8"
+webbrowser = "1.2"
 
 [features]
 # Fork B (loopback reverse-proxy that injects X-aws-proxy-auth/-port) is THE
@@ -90,7 +90,7 @@ optional = true
 # 0.24 rides rustls 0.23 (webpki 0.103), deduping onto reqwest's TLS stack and
 # dropping the vulnerable webpki 0.102 that 0.21's rustls 0.22 pulled in.
 [dependencies.tokio-tungstenite]
-version = "0.24"
+version = "0.29"
 optional = true
 features = ["rustls-tls-webpki-roots", "connect"]
 

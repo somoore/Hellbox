@@ -8,7 +8,7 @@ use aws_sdk_lambdamicrovms::types::{
     CodeArtifact, HookState, Hooks, MicrovmHooks, MicrovmImageHooks,
 };
 use walkdir::WalkDir;
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 
 use crate::aws::Aws;
 use crate::config::Config;
@@ -163,7 +163,7 @@ fn zip_context(dir: &Path) -> Result<PathBuf> {
     let file = std::fs::File::create(&out_path)
         .with_context(|| format!("creating {}", out_path.display()))?;
     let mut zip = zip::ZipWriter::new(file);
-    let opts: FileOptions = FileOptions::default()
+    let opts = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .unix_permissions(0o755);
 
