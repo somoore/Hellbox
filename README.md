@@ -123,22 +123,7 @@ header that browsers cannot set, so `ldoom open` runs a tiny loopback proxy that
 
 Full design is in [docs/architecture.md](docs/architecture.md), the security model is in
 [docs/security.md](docs/security.md), and the verified MicroVMs API facts are in
-[docs/microvm-ground-truth.md](docs/microvm-ground-truth.md). To replace DOOM with another
-capsule, see [docs/generalizing.md](docs/generalizing.md).
-
-## Demo media
-
-Demo screenshots and clips should come from a real LambdaDoom session, not a mock page. Once
-you have a running proxy:
-
-```bash
-ldoom open --name doom --no-open
-make capture-demo-media
-```
-
-That writes `assets/demo/lambdadoom-live.png` and `assets/demo/lambdadoom-live.webm` from the
-live browser stream. The script exits instead of generating placeholder media if
-`127.0.0.1:6080` is not serving LambdaDoom.
+[docs/microvm-ground-truth.md](docs/microvm-ground-truth.md).
 
 <details>
 <summary><b>Configuration</b> (environment variables)</summary>

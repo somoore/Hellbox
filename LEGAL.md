@@ -19,6 +19,5 @@ LambdaDoom runs in your own AWS account under your own AWS agreement. You are re
 AWS charges incurred.
 
 LambdaDoom's original source code is licensed under the Apache License, Version 2.0. See
-[LICENSE](LICENSE). See [LICENSING.md](LICENSING.md) for the licensing recommendation and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party component notices and
-source-availability notes.
+[LICENSE](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party
+component notices and source-availability notes.
