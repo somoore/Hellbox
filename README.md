@@ -1,8 +1,14 @@
 <div align="center">
 
-# LambdaDoom
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/lambdadoom-wordmark-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/lambdadoom-wordmark-light.png">
+  <img src="docs/assets/lambdadoom-wordmark-dark.png" alt="LambdaDoom" width="320">
+</picture>
 
-[![Rust Report Card](https://rust-reportcard.xuri.me/badge/github.com/somoore/lambdadoom)](https://rust-reportcard.xuri.me/report/github.com/somoore/lambdadoom)
+[![CI](https://github.com/somoore/LambdaDoom/actions/workflows/ci.yml/badge.svg)](https://github.com/somoore/LambdaDoom/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/somoore/LambdaDoom)](https://github.com/somoore/LambdaDoom/releases/latest)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 ### DOOM inside an AWS Lambda MicroVM.
 
