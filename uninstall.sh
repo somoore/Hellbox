@@ -4,8 +4,7 @@
 #   ./uninstall.sh
 set -uo pipefail
 
-REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
-NAME="${HELLBOX_NAME:-${LAMBDADOOM_NAME:-doom}}"
+DEFAULT_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 HELLBOX_HOME_DIR="${HELLBOX_HOME:-$HOME/.hellbox}"
 LEGACY_HOME_DIR="${LAMBDADOOM_HOME:-$HOME/.lambdadoom}"
 
@@ -13,26 +12,77 @@ say(){ printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
 warn(){ printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 FAILED=0
 
-home_dirs=("$HELLBOX_HOME_DIR")
-if [ -z "${HELLBOX_HOME:-}" ] && [ "$LEGACY_HOME_DIR" != "$HELLBOX_HOME_DIR" ]; then
-  home_dirs+=("$LEGACY_HOME_DIR")
+home_specs=("hellbox|$HELLBOX_HOME_DIR|${HELLBOX_NAME:-doom}")
+if { [ -z "${HELLBOX_HOME:-}" ] || [ -n "${LAMBDADOOM_HOME:-}" ]; } && [ "$LEGACY_HOME_DIR" != "$HELLBOX_HOME_DIR" ]; then
+  home_specs+=("lambdadoom|$LEGACY_HOME_DIR|${LAMBDADOOM_NAME:-doom}")
 fi
 
-if [ -n "${HELLBOX_STACK:-}" ]; then
-  stacks=("$HELLBOX_STACK")
-elif [ -n "${LAMBDADOOM_STACK:-}" ]; then
-  stacks=("$LAMBDADOOM_STACK")
+if [ -n "${HELLBOX_STACK:-}" ] || [ -n "${LAMBDADOOM_STACK:-}" ]; then
+  stack_specs=()
+  [ -n "${HELLBOX_STACK:-}" ] && stack_specs+=("hellbox|$HELLBOX_HOME_DIR|$HELLBOX_STACK")
+  [ -n "${LAMBDADOOM_STACK:-}" ] && stack_specs+=("lambdadoom|$LEGACY_HOME_DIR|$LAMBDADOOM_STACK")
 else
-  stacks=("Hellbox" "LambdaDoom")
+  stack_specs=("hellbox|$HELLBOX_HOME_DIR|Hellbox")
+  if { [ -z "${HELLBOX_HOME:-}" ] || [ -n "${LAMBDADOOM_HOME:-}" ]; } && [ "$LEGACY_HOME_DIR" != "$HELLBOX_HOME_DIR" ]; then
+    stack_specs+=("lambdadoom|$LEGACY_HOME_DIR|LambdaDoom")
+  fi
 fi
 
-# Prefer the deployed region from config, checking new and legacy homes.
-for d in "${home_dirs[@]}"; do
+region_for_home(){
+  local d="$1" default_region="$2" r
   if [ -f "$d/config.toml" ]; then
     r="$(grep -E '^region' "$d/config.toml" | sed -E 's/.*"([^"]+)".*/\1/')"
-    [ -n "$r" ] && { REGION="$r"; break; }
+    if [ -n "$r" ]; then
+      printf '%s' "$r"
+      return
+    fi
   fi
-done
+  printf '%s' "$default_region"
+}
+
+stack_missing(){
+  case "$1" in
+    *"does not exist"*|*"doesn't exist"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+cli_for_home(){
+  local kind="$1" dir="$2" c
+  local -a candidates
+  if [ "$kind" = "lambdadoom" ]; then
+    candidates=(
+      "${LDOOM_BIN:-}"
+      "${LAMBDADOOM_BIN:-}"
+      "${HELLBOX_BIN:-}"
+      "$dir/bin/ldoom"
+      "$dir/bin/ldoom.exe"
+      "$dir/bin/hellbox"
+      "$dir/bin/hellbox.exe"
+      "rs-cli/target/release/ldoom"
+      "rs-cli/target/release/ldoom.exe"
+      "rs-cli/target/release/hellbox"
+      "rs-cli/target/release/hellbox.exe"
+    )
+  else
+    candidates=(
+      "${HELLBOX_BIN:-}"
+      "${LAMBDADOOM_BIN:-}"
+      "${LDOOM_BIN:-}"
+      "$dir/bin/hellbox"
+      "$dir/bin/hellbox.exe"
+      "$dir/bin/ldoom"
+      "$dir/bin/ldoom.exe"
+      "rs-cli/target/release/hellbox"
+      "rs-cli/target/release/hellbox.exe"
+      "rs-cli/target/release/ldoom"
+      "rs-cli/target/release/ldoom.exe"
+    )
+  fi
+  for c in "${candidates[@]}"; do
+    [ -n "$c" ] && [ -x "$c" ] && { printf '%s' "$c"; return; }
+  done
+}
 
 # Stop a running loopback proxy (`hellbox open`) if one is still up — uninstall
 # should be self-contained whether or not the user Ctrl-C'd it first. Targets only
@@ -43,44 +93,40 @@ if command -v pkill >/dev/null 2>&1; then
   fi
 fi
 
-# Locate hellbox for MicroVM cleanup.
-DOOM=""
-for c in \
-  "${HELLBOX_BIN:-}" \
-  "${LAMBDADOOM_BIN:-}" \
-  "$HELLBOX_HOME_DIR/bin/hellbox" \
-  "$HELLBOX_HOME_DIR/bin/hellbox.exe" \
-  "$LEGACY_HOME_DIR/bin/hellbox" \
-  "$LEGACY_HOME_DIR/bin/hellbox.exe" \
-  "$LEGACY_HOME_DIR/bin/ldoom" \
-  "$LEGACY_HOME_DIR/bin/ldoom.exe" \
-  "rs-cli/target/release/hellbox" \
-  "rs-cli/target/release/hellbox.exe" \
-  "rs-cli/target/release/ldoom" \
-  "rs-cli/target/release/ldoom.exe"; do
-  [ -n "$c" ] && [ -x "$c" ] && { DOOM="$c"; break; }
+# MicroVM + image.
+for spec in "${home_specs[@]}"; do
+  IFS='|' read -r kind d name <<<"$spec"
+  [ -d "$d" ] || continue
+  DOOM="$(cli_for_home "$kind" "$d")"
+  if [ -n "$DOOM" ]; then
+    say "Removing the DOOM microvm + image using state in $d"
+    HELLBOX_HOME="$d" LAMBDADOOM_HOME="$d" "$DOOM" rm --name "$name" \
+      || say "(nothing to remove, or already gone)"
+  else
+    say "hellbox/ldoom CLI not found for $d — skipping microvm/image cleanup (delete the image manually if one exists)"
+  fi
 done
 
-# MicroVM + image.
-if [ -n "$DOOM" ]; then
-  for d in "${home_dirs[@]}"; do
-    [ -d "$d" ] || continue
-    say "Removing the DOOM microvm + image using state in $d"
-    HELLBOX_HOME="$d" LAMBDADOOM_HOME="$d" "$DOOM" rm --name "$NAME" \
-      || say "(nothing to remove, or already gone)"
-  done
-else
-  say "hellbox/ldoom CLI not found — skipping microvm/image cleanup (delete the image manually if one exists)"
-fi
-
 # Stack.
-for stack in "${stacks[@]}"; do
-  if ! aws cloudformation describe-stacks --region "$REGION" --stack-name "$stack" >/dev/null 2>&1; then
-    say "CloudFormation stack not found, skipping: $stack"
+for spec in "${stack_specs[@]}"; do
+  IFS='|' read -r kind d stack <<<"$spec"
+  REGION="$(region_for_home "$d" "$DEFAULT_REGION")"
+  describe_output=""
+  if ! describe_output="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$stack" 2>&1)"; then
+    if stack_missing "$describe_output"; then
+      say "CloudFormation stack not found in $REGION, skipping: $stack"
+    else
+      warn "could not describe CloudFormation stack '$stack' in $REGION — leaving local state in place; AWS said: $describe_output"
+      FAILED=1
+    fi
     continue
   fi
-  BUCKET="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$stack" \
-    --query "Stacks[0].Outputs[?OutputKey=='ArtifactBucket'].OutputValue" --output text 2>/dev/null || true)"
+  if ! BUCKET="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$stack" \
+    --query "Stacks[0].Outputs[?OutputKey=='ArtifactBucket'].OutputValue" --output text 2>&1)"; then
+    warn "could not read artifact bucket for '$stack' in $REGION — leaving local state in place; AWS said: $BUCKET"
+    FAILED=1
+    continue
+  fi
   if [ -n "$BUCKET" ] && [ "$BUCKET" != "None" ]; then
     say "Emptying artifact bucket: $BUCKET"
     # Surface the real error: a non-empty bucket blocks stack deletion, and a
@@ -100,14 +146,17 @@ for stack in "${stacks[@]}"; do
   fi
 done
 
+if [ "$FAILED" = 1 ]; then
+  warn "uninstall finished with errors — local state was left in place so cleanup can be retried after fixing AWS access."
+  warn "verify in the AWS console that the stack, bucket, and any MicroVM/image are gone (they may still incur cost)."
+  exit 1
+fi
+
 # Local state.
-for d in "${home_dirs[@]}"; do
+for spec in "${home_specs[@]}"; do
+  IFS='|' read -r _ d _ <<<"$spec"
   say "Removing $d  (binary, config, state)"
   rm -rf "$d"
 done
 
-if [ "$FAILED" = 1 ]; then
-  warn "uninstall finished with errors — verify in the AWS console that the stack, bucket, and any MicroVM/image are gone (they may still incur cost)."
-  exit 1
-fi
 say "Hellbox removed. Delete your clone of the repo if you no longer need it."
